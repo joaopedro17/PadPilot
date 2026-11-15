@@ -109,7 +109,8 @@ just check   # format and lints for Linux and Windows
 just build   # executables in target/x86_64-pc-windows-msvc/release
 ```
 
-On Windows itself, `cargo build --release` works too. `tools/windows` has double-click
+On Windows itself, `cargo build --release` works too. [CONTRIBUTING.md](CONTRIBUTING.md) has
+the full setup and how changes are tested. `tools/windows` has double-click
 launchers for development and for checking a new machine one piece at a time
 (`padpilot help` lists the test commands). The icon is drawn by the joystick's own
 painting code; `cargo run -p padpilot-core --example icon` regenerates `assets/`.
@@ -146,6 +147,18 @@ kind of driver is also used by macro and cheating tools. So:
   break it; the controller output is kept behind one interface so another driver can
   replace it.
 - An accidental right-click leaves joystick mode mid-race.
+
+## Contributing
+
+Bug reports, ideas and code are all welcome; [CONTRIBUTING.md](CONTRIBUTING.md) explains
+how to report a problem, build and test PadPilot, and the safety and accessibility rules
+every change keeps.
+
+## Support
+
+PadPilot is free and always will be. If it has brought a game back within reach for you
+and you feel like saying thanks, you can [buy me a coffee](https://buymeacoffee.com/joaopedro.luz17)
+— entirely optional, hugely appreciated.
 
 ## License
 
