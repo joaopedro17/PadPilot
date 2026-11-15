@@ -2,12 +2,18 @@
 
 # PadPilot
 
-Drive racing games with your laptop's touchpad. PadPilot puts a small joystick on the
-screen; right-click it and the touchpad becomes an analog stick that the game sees as an
-Xbox controller: slide up for throttle, down for brake, sideways to steer.
+**An accessibility tool for playing racing games with a laptop touchpad.**
 
-It is made for people who use the whole computer through a touchpad and cannot use a
-physical controller.
+PadPilot is for people with a limited range of motion: people who use the whole computer
+through a laptop's touchpad and cannot hold a controller, reach a keyboard for long, or
+make large movements, whether from a disability they were born with or one that has grown
+over time. Games are a big part of many people's lives, and losing the ability to play
+should not be the price of losing some movement.
+
+PadPilot puts a small joystick on the screen. Right-click it, and small finger movements
+on the touchpad become an analog stick that the game sees as an ordinary Xbox controller:
+slide up for throttle, down for brake, sideways to steer. How far the finger has to travel
+is adjustable, so even a very small range of motion can reach full throttle and full lock.
 
 ## What you need
 
@@ -116,6 +122,21 @@ painting code; `cargo run -p padpilot-core --example icon` regenerates `assets/`
 | `crates/settings` | `padpilot-settings.exe`: the settings window. |
 | `crates/logging` | Log files and where PadPilot keeps its files. |
 | `crates/icon` | Build helper that puts the icon into the executables. |
+
+## Anti-cheat and online games
+
+PadPilot does not read, change or inject anything into a game. It creates a virtual Xbox
+controller through the ViGEmBus driver and shows a window on top of the game; to the game
+it looks like a controller plugged in.
+
+Some games' anti-cheat systems still block or flag virtual controllers, because the same
+kind of driver is also used by macro and cheating tools. So:
+
+- In some online games the virtual controller may simply not be recognized.
+- In competitive online games there is a small risk that the anti-cheat treats it as
+  suspicious. Check the game's rules, and if in doubt, ask the game's support whether
+  virtual controllers are allowed for accessibility.
+- Single-player and offline games are not affected by this.
 
 ## Known limitations
 
