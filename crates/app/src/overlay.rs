@@ -62,7 +62,7 @@ thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
 }
 
-pub fn run(joystick_limit: Duration) -> Result<(), Error> {
+pub fn run(joystick_limit: Duration, settings: StickSettings) -> Result<(), Error> {
     // SAFETY: a process-wide setting, made before any window exists. It
     // fails harmlessly when the setting was already made.
     let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
@@ -75,7 +75,7 @@ pub fn run(joystick_limit: Duration) -> Result<(), Error> {
     let layout = Layout::new(DEFAULT_JOYSTICK_SIDE, scale);
     let mut state = State {
         window,
-        model: Overlay::new(StickSettings::default()),
+        model: Overlay::new(settings),
         layout,
         surface: Surface::new(layout.width(), layout.height())?,
         pad: Box::new(pad),

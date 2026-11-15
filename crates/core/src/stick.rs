@@ -101,13 +101,18 @@ impl StickSettings {
     }
 }
 
+/// Finger travel for full deflection, in mm, unless the user sets another.
+pub const DEFAULT_FULL_TRAVEL: f32 = 10.0;
+/// Fraction of the stick's radius with no effect, unless the user sets another.
+pub const DEFAULT_DEAD_ZONE: f32 = 0.05;
+
 impl Default for StickSettings {
-    /// Springs back to center; 20 mm of finger travel for full deflection.
+    /// Springs back to center; [`DEFAULT_FULL_TRAVEL`] for full deflection.
     fn default() -> Self {
         Self {
             lift_behavior: LiftBehavior::ReturnToCenter,
-            full_travel: 20.0,
-            dead_zone: 0.05,
+            full_travel: DEFAULT_FULL_TRAVEL,
+            dead_zone: DEFAULT_DEAD_ZONE,
         }
     }
 }

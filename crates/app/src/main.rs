@@ -3,6 +3,8 @@
 #[cfg(windows)]
 mod commands;
 #[cfg(windows)]
+mod config;
+#[cfg(windows)]
 mod controller;
 #[cfg(windows)]
 mod error;

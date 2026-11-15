@@ -13,7 +13,7 @@ use tracing::{Level, debug, error, info, trace};
 
 use crate::controller::{self, VirtualController};
 use crate::error::Error;
-use crate::{overlay, touchpad};
+use crate::{config, overlay, touchpad};
 
 const USAGE: &str = "\
 Usage:
@@ -63,12 +63,12 @@ impl Command {
         }
     }
 
-    fn run(self) -> Result<(), Error> {
+    fn run(self, settings: StickSettings) -> Result<(), Error> {
         match self {
             Self::Throttle(hold) => hold_half_throttle(hold),
             Self::Touchpad(duration) => log_touches(duration),
-            Self::Drive(duration) => drive(duration),
-            Self::Overlay { joystick_limit } => overlay::run(joystick_limit),
+            Self::Drive(duration) => drive(duration, settings),
+            Self::Overlay { joystick_limit } => overlay::run(joystick_limit, settings),
         }
     }
 }
@@ -89,7 +89,8 @@ pub fn run(args: impl Iterator<Item = String>) -> ExitCode {
     info!(target: "app", version = env!("CARGO_PKG_VERSION"), ?command, "startup");
     println!("Logging to {}", logs.display());
 
-    let result = command.run();
+    let config = config::load();
+    let result = command.run(config.stick);
     if let Err(err) = &result {
         error!(target: "app", "{err}");
         eprintln!("Failed: {err}");
@@ -145,9 +146,8 @@ fn log_touches(duration: Duration) -> Result<(), Error> {
 }
 
 /// Finger movement deflects the stick; the stick drives the controller.
-fn drive(duration: Duration) -> Result<(), Error> {
+fn drive(duration: Duration, settings: StickSettings) -> Result<(), Error> {
     let mut pad = controller::connect()?;
-    let settings = StickSettings::default();
     let mut stick = Stick::new(settings);
     info!(target: "stick", ?settings, seconds = duration.as_secs(), "driving from the touchpad");
     println!("Driving for {} s.", duration.as_secs());
