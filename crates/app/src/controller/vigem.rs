@@ -6,7 +6,8 @@ use padpilot_core::gamepad::GamepadState;
 use tracing::{debug, info};
 use vigem_client::{Client, TargetId, XGamepad, Xbox360Wired};
 
-use super::{Error, VirtualController};
+use super::VirtualController;
+use crate::error::Error;
 
 /// The driver drops a report (`ERROR_NO_MORE_ITEMS`) while Windows is not yet
 /// polling the controller. Measured: only the first report right after
@@ -67,5 +68,5 @@ impl Drop for Vigem {
 }
 
 fn failed(what: &str, err: vigem_client::Error) -> Error {
-    Error(format!("{what}: {err:?}"))
+    Error::caused(what, err)
 }

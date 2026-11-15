@@ -5,12 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[dependencies]
+[target.'cfg(windows)'.dependencies]
 padpilot-core.workspace = true
 padpilot-logging.workspace = true
 tracing.workspace = true
-
-[target.'cfg(windows)'.dependencies]
 vigem-client = "0.1"
 
 [target.'cfg(windows)'.dependencies.windows]
