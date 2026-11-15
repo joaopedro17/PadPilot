@@ -1,0 +1,40 @@
+# Mutation testing plants small bugs in the core logic and checks that a test
+# catches each one. It takes a few minutes, so it runs weekly or on demand.
+name: Mutation testing
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      # The drawing code is left out: its shading arithmetic changes how
+      # things look, which no test can judge.
+      # The Windows programs' code is not compiled on Linux, so only the
+      # packages that run here are mutated.
+      # Exit code 3 means only timeouts: a mutant that makes the tests hang
+      # (a huge window, for example) was noticed, so it counts as caught.
+      # Missed mutants (exit code 2) and errors fail the job.
+      - name: cargo mutants
+        run: |
+          code=0
+          cargo mutants -p padpilot-core -p padpilot-icon -p padpilot-logging \
+            --exclude 'crates/core/src/overlay/paint.rs' --exclude 'crates/core/examples/*' || code=$?
+          [ "$code" -eq 0 ] || [ "$code" -eq 3 ]
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants.out
+          path: mutants.out

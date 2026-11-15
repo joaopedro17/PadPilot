@@ -155,6 +155,27 @@ run `Test freeze.cmd` and confirm the car stops and the cursor is free.
   button is clicked`). The body, when needed, says why.
 - One topic per pull request. Describe what changed, why, and how you checked it.
 
+## Continuous integration
+
+Every push to `main` and every pull request runs [CI](.github/workflows/ci.yml): on
+Linux, formatting, clippy and the logic tests; on Windows, clippy, every test and a
+release build, whose executables are attached to the run as an artifact. A pull request
+needs both to pass. [Mutation testing](.github/workflows/mutants.yml) runs weekly and can
+be started by hand from the Actions tab.
+
+## Releasing
+
+1. Set the new version in the root `Cargo.toml` and commit it (`Release 0.9.0`).
+2. Tag that commit with the release notes as the message: the first line becomes the
+   release title, the rest its notes.
+   ```bash
+   git tag -a v0.9.0 -m "PadPilot 0.9.0" -m "What changed, for users."
+   git push origin main v0.9.0
+   ```
+3. The [release workflow](.github/workflows/release.yml) checks that the tag matches
+   the version, runs the tests, builds on Windows and publishes the GitHub release with
+   the zip and its SHA-256 checksum.
+
 ## The icon
 
 The icon is drawn by the same code that draws the joystick (`paint_icon` in

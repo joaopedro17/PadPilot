@@ -29,7 +29,9 @@ impl Opacity {
     pub fn next(self) -> Self {
         Self::STEPS
             .into_iter()
-            .find(|&step| step < self.0 - 0.001)
+            // Compared as the window system sees them, 0 to 255, so values a
+            // rounding error apart count as the same step.
+            .find(|&step| Self(step).alpha() < self.alpha())
             .map_or(Self::FULL, Self)
     }
 
