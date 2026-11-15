@@ -2,5 +2,6 @@
 //! operating system API, so everything is testable without hardware.
 
 pub mod gamepad;
+pub mod overlay;
 pub mod stick;
 pub mod touchpad;
