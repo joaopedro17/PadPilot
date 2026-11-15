@@ -128,6 +128,16 @@ fn dead_zone_ignores_small_deflection_and_rescales_the_rest() {
 }
 
 #[test]
+fn dead_zone_is_round_so_it_rescales_every_direction_alike() {
+    let mut s = stick(LiftBehavior::ReturnToCenter, 0.2);
+    touch(&mut s, 0.0, 0.0);
+    touch(&mut s, 0.0, -12.0);
+    assert_at(&s, 0.0, 0.5);
+    touch(&mut s, -7.2, -9.6);
+    assert_at(&s, -0.3, 0.4);
+}
+
+#[test]
 fn dead_zone_does_not_lose_travel_made_inside_it() {
     let mut s = stick(LiftBehavior::ReturnToCenter, 0.2);
     touch(&mut s, 0.0, 0.0);
