@@ -119,3 +119,29 @@ impl PadScale {
         }
     }
 }
+
+/// Puts a frame back together when the pad splits it over several reports.
+///
+/// Each report has a fixed number of finger slots. The first report of a
+/// frame says how many contacts the frame has; when they do not fit, the
+/// reports that follow carry the rest and say zero.
+#[derive(Debug, Default)]
+pub struct FrameAssembler {
+    frame: Vec<RawContact>,
+    missing: usize,
+}
+
+impl FrameAssembler {
+    /// Takes one report. Returns the frame once it is complete.
+    pub fn report(&mut self, contact_count: u32, slots: &[RawContact]) -> Option<&[RawContact]> {
+        if self.missing == 0 {
+            self.frame.clear();
+            self.missing = contact_count as usize;
+        }
+        let taken = self.missing.min(slots.len());
+        self.frame.extend_from_slice(&slots[..taken]);
+        // A report that brings nothing ends the frame, or it would never end.
+        self.missing = if taken == 0 { 0 } else { self.missing - taken };
+        (self.missing == 0).then_some(&self.frame[..])
+    }
+}

@@ -1,5 +1,5 @@
 use padpilot_core::stick::{Contact, Point};
-use padpilot_core::touchpad::{AxisRange, FirstContact, PadScale, RawContact};
+use padpilot_core::touchpad::{AxisRange, FirstContact, FrameAssembler, PadScale, RawContact};
 
 fn finger(id: u32, tip: bool, x: f32, y: f32) -> RawContact {
     RawContact {
@@ -144,4 +144,52 @@ fn pad_scale_assumes_a_width_when_the_size_is_unknown() {
 #[test]
 fn the_largest_positive_exponent_is_not_mistaken_for_a_negative_one() {
     assert_close(axis(10_000_000, 1, 0x11, 7).mm_per_count().unwrap(), 10.0);
+}
+
+fn slots(ids: &[u32]) -> Vec<RawContact> {
+    ids.iter()
+        .map(|&id| finger(id, true, id as f32, 0.0))
+        .collect()
+}
+
+fn ids(frame: Option<&[RawContact]>) -> Option<Vec<u32>> {
+    frame.map(|contacts| contacts.iter().map(|contact| contact.id).collect())
+}
+
+#[test]
+fn a_frame_keeps_only_the_slots_the_contact_count_covers() {
+    let mut assembler = FrameAssembler::default();
+    assert_eq!(
+        ids(assembler.report(2, &slots(&[1, 2, 0, 0, 0]))),
+        Some(vec![1, 2])
+    );
+    assert_eq!(
+        ids(assembler.report(1, &slots(&[2, 0, 0, 0, 0]))),
+        Some(vec![2])
+    );
+}
+
+#[test]
+fn a_frame_with_no_contacts_is_complete_and_empty() {
+    let mut assembler = FrameAssembler::default();
+    assert_eq!(ids(assembler.report(0, &slots(&[0, 0]))), Some(vec![]));
+}
+
+#[test]
+fn a_frame_split_over_several_reports_arrives_whole() {
+    let mut assembler = FrameAssembler::default();
+    assert_eq!(ids(assembler.report(5, &slots(&[1, 2]))), None);
+    assert_eq!(ids(assembler.report(0, &slots(&[3, 4]))), None);
+    assert_eq!(
+        ids(assembler.report(0, &slots(&[5, 0]))),
+        Some(vec![1, 2, 3, 4, 5])
+    );
+    assert_eq!(ids(assembler.report(1, &slots(&[9, 0]))), Some(vec![9]));
+}
+
+#[test]
+fn a_report_without_slots_cannot_stall_the_frame() {
+    let mut assembler = FrameAssembler::default();
+    assert_eq!(ids(assembler.report(3, &[])), Some(vec![]));
+    assert_eq!(ids(assembler.report(1, &slots(&[4]))), Some(vec![4]));
 }
