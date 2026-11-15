@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/core", "crates/logging", "crates/app", "crates/watchdog", "crates/settings", "crates/icon"]
 
 [workspace.package]
-version = "0.8.0-dev"
+version = "0.8.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 

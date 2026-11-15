@@ -27,9 +27,16 @@ is adjustable, so even a very small range of motion can reach full throttle and 
 
 ## Getting started
 
-Put `padpilot.exe`, `padpilot-watchdog.exe` and `padpilot-settings.exe` in the same
-folder and start `padpilot.exe`. The joystick appears in the bottom-right corner of the
-screen.
+Download the zip from the releases page and put `padpilot.exe`, `padpilot-watchdog.exe`
+and `padpilot-settings.exe` in the same folder.
+
+PadPilot is not code-signed, so Windows treats a downloaded copy with suspicion. Before
+unzipping, right-click the zip, choose **Properties**, tick **Unblock** and press OK;
+otherwise Windows may ask for confirmation for each of the three programs. If SmartScreen
+says "Windows protected your PC", choose **More info → Run anyway**. The very first start
+can also take a moment while Windows checks the new files.
+
+Start `padpilot.exe`. The joystick appears in the bottom-right corner of the screen.
 
 1. Start the game and click into it.
 2. **Right-click the joystick.** The ring turns blue and the cursor stays on the

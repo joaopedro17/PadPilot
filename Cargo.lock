@@ -2373,7 +2373,7 @@ dependencies = [
 
 [[package]]
 name = "padpilot"
-version = "0.8.0-dev"
+version = "0.8.0"
 dependencies = [
  "padpilot-core",
  "padpilot-icon",
@@ -2385,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "padpilot-core"
-version = "0.8.0-dev"
+version = "0.8.0"
 dependencies = [
  "serde",
  "toml",
@@ -2394,11 +2394,11 @@ dependencies = [
 
 [[package]]
 name = "padpilot-icon"
-version = "0.8.0-dev"
+version = "0.8.0"
 
 [[package]]
 name = "padpilot-logging"
-version = "0.8.0-dev"
+version = "0.8.0"
 dependencies = [
  "tracing",
  "tracing-appender",
@@ -2407,7 +2407,7 @@ dependencies = [
 
 [[package]]
 name = "padpilot-settings"
-version = "0.8.0-dev"
+version = "0.8.0"
 dependencies = [
  "eframe",
  "padpilot-core",
@@ -2420,7 +2420,7 @@ dependencies = [
 
 [[package]]
 name = "padpilot-watchdog"
-version = "0.8.0-dev"
+version = "0.8.0"
 dependencies = [
  "padpilot-core",
  "padpilot-icon",
