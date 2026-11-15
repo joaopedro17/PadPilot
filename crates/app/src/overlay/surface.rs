@@ -69,9 +69,10 @@ impl Surface {
         }
     }
 
-    /// Shows the pixels in `window`, resizing it to fit. `opacity` scales the
-    /// whole window; fully transparent pixels let clicks through.
-    pub fn present(&self, window: HWND, opacity: u8) -> Result<(), Error> {
+    /// Shows the pixels in `window`, resizing it to fit and moving its
+    /// top-left corner to `at` when given. `opacity` scales the whole window;
+    /// fully transparent pixels let clicks through.
+    pub fn present(&self, window: HWND, opacity: u8, at: Option<POINT>) -> Result<(), Error> {
         let size = SIZE {
             cx: self.width,
             cy: self.height,
@@ -87,7 +88,7 @@ impl Surface {
             UpdateLayeredWindow(
                 window,
                 None,
-                None,
+                at.as_ref().map(std::ptr::from_ref),
                 Some(&size),
                 Some(self.dc),
                 Some(&POINT::default()),

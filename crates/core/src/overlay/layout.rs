@@ -8,6 +8,10 @@ pub const MIN_JOYSTICK_SIDE: f32 = 200.0;
 pub const DEFAULT_JOYSTICK_SIDE: f32 = 240.0;
 /// Gap between the joystick's base and the edge of the window.
 const BASE_MARGIN: f32 = 2.0;
+/// The resize handle: a square in the bottom-right corner, outside the circle.
+const GRIP_SIZE: f32 = 20.0;
+/// Each notch of scrolling changes the joystick's side by this factor.
+const SCROLL_GROWTH: f32 = 1.1;
 
 /// Title bar buttons, left to right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +37,7 @@ pub enum Region {
     DragArea,
     Button(Button),
     Joystick,
+    ResizeHandle,
     /// Transparent: around the circle, or off the window.
     Outside,
 }
@@ -47,6 +52,8 @@ pub struct Rect {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Layout {
+    /// The joystick's side at 100% scaling.
+    joystick_side: f32,
     side: i32,
     bar: i32,
     button: i32,
@@ -66,10 +73,39 @@ impl Layout {
         let side = joystick_side.max(MIN_JOYSTICK_SIDE);
         let pixels = |size: f32| (size * scale).round() as i32;
         Self {
+            joystick_side: side,
             side: pixels(side),
             bar: pixels(TITLE_BAR_HEIGHT),
             button: pixels(BUTTON_SIZE),
             scale,
+        }
+    }
+
+    /// The side the layout was made for, at 100% scaling.
+    pub fn joystick_side(&self) -> f32 {
+        self.joystick_side
+    }
+
+    /// The side at 100% scaling that puts the window's bottom-right corner
+    /// nearest `(x, y)`, in window pixels; the square follows the farther
+    /// direction.
+    pub fn side_for_corner(&self, x: i32, y: i32) -> f32 {
+        let pixels = x.max(y - self.bar) as f32;
+        (pixels / self.scale).max(MIN_JOYSTICK_SIDE)
+    }
+
+    /// The side at 100% scaling after scrolling `notches` (up is positive).
+    pub fn side_after_scroll(&self, notches: f32) -> f32 {
+        (self.joystick_side * SCROLL_GROWTH.powf(notches)).max(MIN_JOYSTICK_SIDE)
+    }
+
+    pub fn grip_rect(&self) -> Rect {
+        let size = (GRIP_SIZE * self.scale).round() as i32;
+        Rect {
+            left: self.width() - size,
+            top: self.height() - size,
+            right: self.width(),
+            bottom: self.height(),
         }
     }
 
@@ -121,6 +157,10 @@ impl Layout {
                 Ok(index) => Region::Button(Button::ALL[index]),
                 Err(_) => Region::DragArea,
             };
+        }
+        let grip = self.grip_rect();
+        if x >= grip.left && y >= grip.top {
+            return Region::ResizeHandle;
         }
         let (center_x, center_y) = self.joystick_center();
         let distance = (x as f32 + 0.5 - center_x).hypot(y as f32 + 0.5 - center_y);

@@ -66,10 +66,11 @@ impl Command {
         }
     }
 
-    /// Per-event touchpad data is only logged at trace.
-    fn log_level(self) -> Level {
+    /// The touchpad test logs every event, at trace; the rest follow the
+    /// config file.
+    fn log_level(self, configured: Level) -> Level {
         match self {
-            Self::Throttle(_) | Self::Drive(_) | Self::Overlay(_) => Level::INFO,
+            Self::Throttle(_) | Self::Drive(_) | Self::Overlay(_) => configured,
             Self::Touchpad(_) => Level::TRACE,
         }
     }
@@ -89,8 +90,10 @@ pub fn run(args: impl Iterator<Item = String>) -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::FAILURE;
     };
+    let loaded = config::read();
     let logs = padpilot_logging::logs_dir();
-    let _log_guard = match padpilot_logging::init(&logs, "padpilot", command.log_level()) {
+    let level = command.log_level(loaded.log_level());
+    let _log_guard = match padpilot_logging::init(&logs, "padpilot", level) {
         Ok(guard) => guard,
         Err(err) => {
             eprintln!("cannot write logs to {}: {err}", logs.display());
@@ -100,8 +103,8 @@ pub fn run(args: impl Iterator<Item = String>) -> ExitCode {
     info!(target: "app", version = env!("CARGO_PKG_VERSION"), ?command, "startup");
     println!("Logging to {}", logs.display());
 
-    let config = config::load();
-    let result = command.run(config.stick);
+    loaded.report();
+    let result = command.run(loaded.config.stick);
     if let Err(err) = &result {
         error!(target: "app", "{err}");
         eprintln!("Failed: {err}");

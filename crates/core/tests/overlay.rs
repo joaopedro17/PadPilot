@@ -68,7 +68,7 @@ fn the_joystick_is_a_circle_and_its_corners_are_outside() {
     assert_eq!(layout.region_at(3, 152), Region::Joystick);
     assert_eq!(layout.region_at(0, 152), Region::Outside);
     assert_eq!(layout.region_at(4, 36), Region::Outside);
-    assert_eq!(layout.region_at(235, 268), Region::Outside);
+    assert_eq!(layout.region_at(4, 268), Region::Outside);
 }
 
 #[test]
@@ -77,6 +77,49 @@ fn points_off_the_window_are_outside() {
     for (x, y) in [(-1, 5), (240, 5), (5, -1), (120, 272)] {
         assert_eq!(layout.region_at(x, y), Region::Outside, "({x}, {y})");
     }
+}
+
+#[test]
+fn the_resize_handle_sits_in_the_bottom_right_corner_outside_the_circle() {
+    for (side, scale) in [(200.0, 1.0), (240.0, 1.0), (333.0, 1.25), (500.0, 2.0)] {
+        let layout = Layout::new(side, scale);
+        let grip = layout.grip_rect();
+        assert_eq!((grip.right, grip.bottom), (layout.width(), layout.height()));
+        assert_eq!(grip.right - grip.left, (20.0 * scale).round() as i32);
+        assert_eq!(grip.bottom - grip.top, grip.right - grip.left);
+        for x in grip.left..grip.right {
+            for y in grip.top..grip.bottom {
+                assert_eq!(layout.region_at(x, y), Region::ResizeHandle, "({x}, {y})");
+            }
+        }
+    }
+    let layout = Layout::new(240.0, 1.0);
+    assert_eq!(layout.region_at(2, 32 + 237), Region::Outside);
+    assert_eq!(layout.region_at(237, 34), Region::Outside);
+}
+
+#[test]
+fn the_joystick_side_is_reported_at_100_percent_scaling() {
+    assert_eq!(Layout::new(300.0, 1.5).joystick_side(), 300.0);
+    assert_eq!(Layout::new(120.0, 1.0).joystick_side(), 200.0);
+}
+
+#[test]
+fn dragging_the_corner_sizes_the_square_by_the_farther_direction() {
+    let layout = Layout::new(240.0, 1.25);
+    let bar = layout.title_bar_height();
+    assert_eq!(layout.side_for_corner(400, bar + 300), 320.0);
+    assert_eq!(layout.side_for_corner(300, bar + 400), 320.0);
+    assert_eq!(layout.side_for_corner(10, 10), 200.0);
+}
+
+#[test]
+fn scrolling_grows_and_shrinks_the_joystick_by_a_tenth_per_notch() {
+    let layout = Layout::new(300.0, 1.0);
+    assert!((layout.side_after_scroll(1.0) - 330.0).abs() < 1e-3);
+    assert!((layout.side_after_scroll(-1.0) - 300.0 / 1.1).abs() < 1e-3);
+    assert!((layout.side_after_scroll(0.5) - 300.0 * 1.1f32.sqrt()).abs() < 1e-3);
+    assert_eq!(Layout::new(200.0, 1.0).side_after_scroll(-3.0), 200.0);
 }
 
 #[test]
@@ -115,8 +158,9 @@ fn touch(overlay: &mut Overlay, x: f32, y: f32) -> Option<GamepadState> {
     overlay.contact(Contact::Touching(Point { x, y }))
 }
 
-const EVERYWHERE: [Region; 7] = [
+const EVERYWHERE: [Region; 8] = [
     Region::DragArea,
+    Region::ResizeHandle,
     Region::Button(Button::Opacity),
     Region::Button(Button::Settings),
     Region::Button(Button::Minimize),
@@ -219,8 +263,25 @@ fn joystick_mode_cannot_drag_the_window() {
 }
 
 #[test]
-fn normal_mode_buttons_minimize_and_close() {
+fn the_resize_handle_works_only_in_normal_mode() {
+    let mut o = overlay();
+    assert_eq!(o.hit(Region::ResizeHandle), HitKind::Client);
+    assert!(o.starts_resize(Region::ResizeHandle));
+    assert!(!o.starts_resize(Region::Joystick));
+    assert!(o.can_resize());
+    o.right_click(Region::Joystick);
+    assert_eq!(o.hit(Region::ResizeHandle), HitKind::PassThrough);
+    assert!(!o.starts_resize(Region::ResizeHandle));
+    assert!(!o.can_resize());
+}
+
+#[test]
+fn normal_mode_buttons_change_opacity_minimize_and_close() {
     let o = overlay();
+    assert_eq!(
+        o.left_click(Region::Button(Button::Opacity)),
+        Some(Command::Opacity)
+    );
     assert_eq!(
         o.left_click(Region::Button(Button::Minimize)),
         Some(Command::Minimize)
@@ -350,6 +411,19 @@ fn title_bar_shows_an_icon_on_every_button() {
             .count();
         assert!(drawn > 20, "{button:?} has {drawn} icon pixels");
     }
+}
+
+#[test]
+fn the_resize_handle_is_drawn_only_in_normal_mode() {
+    let drawn = |image: &Image| {
+        let grip = image.layout.grip_rect();
+        (grip.left..grip.right)
+            .flat_map(|x| (grip.top..grip.bottom).map(move |y| (x, y)))
+            .filter(|&(x, y)| image.alpha(x, y) > 0)
+            .count()
+    };
+    assert!(drawn(&render(Mode::Normal, Deflection::NEUTRAL)) > 20);
+    assert_eq!(drawn(&render(Mode::Joystick, Deflection::NEUTRAL)), 0);
 }
 
 #[test]

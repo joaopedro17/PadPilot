@@ -24,6 +24,8 @@ pub enum HitKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
+    /// Step the window's opacity down, wrapping to full.
+    Opacity,
     Minimize,
     Close,
 }
@@ -53,7 +55,7 @@ impl Overlay {
 
     pub fn hit(&self, region: Region) -> HitKind {
         match (region, self.mode) {
-            (Region::Outside, _) => HitKind::PassThrough,
+            (Region::Outside, _) | (Region::ResizeHandle, Mode::Joystick) => HitKind::PassThrough,
             (Region::DragArea, Mode::Normal) => HitKind::Caption,
             _ => HitKind::Client,
         }
@@ -81,8 +83,19 @@ impl Overlay {
         was_on
     }
 
+    /// Resizing, by the handle or by scrolling, works in normal mode only.
+    pub fn can_resize(&self) -> bool {
+        self.mode == Mode::Normal
+    }
+
+    /// Whether pressing the left button here starts resizing.
+    pub fn starts_resize(&self, region: Region) -> bool {
+        self.can_resize() && region == Region::ResizeHandle
+    }
+
     pub fn left_click(&self, region: Region) -> Option<Command> {
         match (self.mode, region) {
+            (Mode::Normal, Region::Button(Button::Opacity)) => Some(Command::Opacity),
             (Mode::Normal, Region::Button(Button::Minimize)) => Some(Command::Minimize),
             (Mode::Normal, Region::Button(Button::Close)) => Some(Command::Close),
             _ => None,

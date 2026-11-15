@@ -7,3 +7,4 @@ pub mod overlay;
 pub mod stick;
 pub mod touchpad;
 pub mod watchdog;
+pub mod window_state;

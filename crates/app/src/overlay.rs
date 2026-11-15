@@ -3,6 +3,9 @@
 //! Always on top, never focused, transparent around the circle. Right-click
 //! the joystick to enter joystick mode: the cursor is kept on the joystick
 //! and the touchpad drives the virtual controller. Right-click again to leave.
+//! In normal mode the window moves by its title bar and resizes by the
+//! handle in its corner or by scrolling over the joystick; its place, size
+//! and opacity are saved.
 
 mod failsafe;
 mod focus;
@@ -16,35 +19,41 @@ use std::ops::ControlFlow;
 use std::time::{Duration, Instant};
 
 use padpilot_core::gamepad::GamepadState;
-use padpilot_core::overlay::layout::{DEFAULT_JOYSTICK_SIDE, Layout};
+use padpilot_core::overlay::layout::{Layout, Region};
 use padpilot_core::overlay::model::{Command, HitKind, Mode, Overlay};
 use padpilot_core::overlay::paint::Painter;
 use padpilot_core::stick::{Contact, StickSettings};
 use padpilot_core::watchdog::{HEARTBEAT_EVERY, Message};
+use padpilot_core::window_state::{Opacity, WindowState};
 use tracing::{debug, error, info, trace, warn};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromRect,
+    MonitorFromWindow,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::HRAWINPUT;
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
 use windows::Win32::UI::WindowsAndMessaging::{
-    ClipCursor, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    GetWindowRect, HTCAPTION, HTCLIENT, HTTRANSPARENT, IDC_ARROW, KillTimer, LoadCursorW,
-    MA_NOACTIVATE, MSG, PostQuitMessage, RegisterClassExW, SPI_GETWORKAREA, SW_MINIMIZE,
-    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetTimer, SetWindowPos, ShowWindow, SystemParametersInfoW,
-    USER_DEFAULT_SCREEN_DPI, WM_ACTIVATE, WM_DESTROY, WM_DPICHANGED, WM_INPUT, WM_LBUTTONUP,
-    WM_MOUSEACTIVATE, WM_MOVING, WM_NCHITTEST, WM_RBUTTONDOWN, WM_TIMER, WNDCLASSEXW,
-    WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_MINIMIZEBOX, WS_POPUP,
-    WS_SYSMENU,
+    ClipCursor, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos,
+    GetMessageW, GetSystemMetrics, GetWindowRect, HTCAPTION, HTCLIENT, HTTRANSPARENT, IDC_ARROW,
+    IsIconic, KillTimer, LoadCursorW, MA_NOACTIVATE, MSG, PostQuitMessage, RegisterClassExW,
+    SM_SWAPBUTTON, SPI_GETWORKAREA, SW_MINIMIZE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
+    SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetTimer, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, USER_DEFAULT_SCREEN_DPI, WM_ACTIVATE, WM_DESTROY, WM_DPICHANGED,
+    WM_EXITSIZEMOVE, WM_INPUT, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEWHEEL,
+    WM_MOVING, WM_NCHITTEST, WM_RBUTTONDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_APPWINDOW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
 };
 use windows::core::w;
 
 use crate::controller::{self, VirtualController};
 use crate::error::Error;
-use crate::touchpad;
+use crate::{touchpad, window_state};
 use failsafe::Failsafe;
 use focus::FocusHook;
 use surface::Surface;
@@ -74,10 +83,17 @@ pub struct Options {
 const CAGE_TIMER: usize = 1;
 const HEARTBEAT_TIMER: usize = 2;
 const CAGE_EVERY_MS: u32 = 100;
+/// While the resize handle is held, the cursor is followed this often. A
+/// window that never takes focus cannot capture the mouse, so it is polled.
+const RESIZE_TIMER: usize = 3;
+const RESIZE_EVERY_MS: u32 = 16;
+/// The window state is saved once it has stayed unchanged this long.
+const SAVE_AFTER: Duration = Duration::from_secs(1);
+/// One notch of a mouse wheel; touchpads scroll in smaller steps.
+const WHEEL_NOTCH: f32 = 120.0;
 
 /// Distance from the screen corner where the window first appears.
 const SCREEN_MARGIN: f32 = 24.0;
-const OPACITY: u8 = 255;
 
 /// Painting takes several milliseconds, longer than the gap between touchpad
 /// events, so the knob is redrawn only when no input is waiting. While input
@@ -98,10 +114,11 @@ pub fn run(options: Options, settings: StickSettings) -> Result<(), Error> {
 
     let watchdog = start_watchdog();
     let pad = controller::connect()?;
+    let saved = window_state::load();
     let window = create_window()?;
     // SAFETY: `window` was just created by this thread.
     let scale = unsafe { GetDpiForWindow(window) } as f32 / USER_DEFAULT_SCREEN_DPI as f32;
-    let layout = Layout::new(DEFAULT_JOYSTICK_SIDE, scale);
+    let layout = Layout::new(saved.joystick_side, scale);
     let mut state = State {
         window,
         model: Overlay::new(settings),
@@ -118,6 +135,10 @@ pub fn run(options: Options, settings: StickSettings) -> Result<(), Error> {
         options,
         joystick_since: None,
         game: None,
+        opacity: saved.opacity,
+        position: saved.position,
+        resizing: None,
+        unsaved_since: None,
     };
     if options.telemetry {
         let telemetry = Telemetry::start(window)?;
@@ -146,7 +167,10 @@ pub fn run(options: Options, settings: StickSettings) -> Result<(), Error> {
             None,
         )
     };
-    place_in_screen_corner(window, layout);
+    match saved.position.filter(|&at| on_a_screen(at, layout)) {
+        Some((x, y)) => move_window(window, x, y),
+        None => place_in_screen_corner(window, layout),
+    }
     // SAFETY: plain calls on a window this thread owns.
     unsafe {
         let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
@@ -196,6 +220,15 @@ struct State {
     game: Option<HWND>,
     /// When the knob on screen stopped matching the stick; `None`: it matches.
     stale_since: Option<Instant>,
+    opacity: Opacity,
+    /// The last place the window was seen while not minimized.
+    position: Option<(i32, i32)>,
+    /// While the resize handle is held: where the window's bottom-right
+    /// corner is, relative to the cursor.
+    resizing: Option<(i32, i32)>,
+    /// When the window was last moved, resized or made more see-through, if
+    /// that is not saved yet.
+    unsaved_since: Option<Instant>,
 }
 
 impl State {
@@ -213,8 +246,137 @@ impl State {
         }
     }
 
-    fn left_click(&self, x: i32, y: i32) -> Option<Command> {
-        self.model.left_click(self.layout.region_at(x, y))
+    fn left_click(&mut self, x: i32, y: i32) -> Option<Command> {
+        if self.resizing.is_some() {
+            self.end_resize();
+            return None;
+        }
+        let command = self.model.left_click(self.layout.region_at(x, y));
+        if command == Some(Command::Opacity) {
+            self.opacity = self.opacity.next();
+            info!(target: "overlay", opacity = self.opacity.value(), "opacity changed");
+            self.changed();
+            self.repaint();
+            return None;
+        }
+        command
+    }
+
+    /// Pressing the handle starts resizing; the resize timer takes over.
+    fn left_press(&mut self, x: i32, y: i32) {
+        if self.model.starts_resize(self.layout.region_at(x, y)) {
+            self.resizing = Some((self.layout.width() - x, self.layout.height() - y));
+            // SAFETY: a plain call on a window this thread owns.
+            unsafe { SetTimer(Some(self.window), RESIZE_TIMER, RESIZE_EVERY_MS, None) };
+            info!(target: "overlay", "resizing started");
+        }
+    }
+
+    fn resize_tick(&mut self) {
+        let Some((grab_x, grab_y)) = self.resizing else {
+            return;
+        };
+        if !left_button_down() {
+            self.end_resize();
+            return;
+        }
+        let (cursor, origin) = (cursor_position(), window_rect(self.window));
+        let side = self.layout.side_for_corner(
+            cursor.x - origin.left + grab_x,
+            cursor.y - origin.top + grab_y,
+        );
+        self.resize(side, (origin.left, origin.top));
+    }
+
+    fn end_resize(&mut self) {
+        if self.resizing.take().is_some() {
+            // SAFETY: a plain call; the timer may already be gone.
+            let _ = unsafe { KillTimer(Some(self.window), RESIZE_TIMER) };
+            info!(target: "overlay", side = self.layout.joystick_side(), "resizing ended");
+        }
+    }
+
+    /// Scrolling over the joystick grows or shrinks it around its center.
+    fn scroll(&mut self, delta: i16, screen_x: i32, screen_y: i32) {
+        let origin = window_rect(self.window);
+        let region = self
+            .layout
+            .region_at(screen_x - origin.left, screen_y - origin.top);
+        if !self.model.can_resize() || region != Region::Joystick {
+            return;
+        }
+        let side = self
+            .layout
+            .side_after_scroll(f32::from(delta) / WHEEL_NOTCH);
+        let (center_x, center_y) = self.layout.joystick_center();
+        let center = (origin.left + center_x as i32, origin.top + center_y as i32);
+        let new = Layout::new(side.min(self.max_side()), self.layout.scale());
+        let (new_x, new_y) = new.joystick_center();
+        self.resize(side, (center.0 - new_x as i32, center.1 - new_y as i32));
+    }
+
+    /// Gives the joystick a new side (at 100% scaling) and puts the window's
+    /// top-left corner at `origin`.
+    fn resize(&mut self, side: f32, (x, y): (i32, i32)) {
+        let layout = Layout::new(side.min(self.max_side()), self.layout.scale());
+        if layout.width() == self.layout.width() {
+            return;
+        }
+        match Surface::new(layout.width(), layout.height()) {
+            Ok(surface) => {
+                self.layout = layout;
+                self.surface = surface;
+                self.painter = Painter::new(layout);
+                self.changed();
+                self.repaint_at(Some(POINT { x, y }));
+            }
+            Err(err) => error!(target: "overlay", "{err}"),
+        }
+    }
+
+    /// The largest side, at 100% scaling, that fits the screen the window is on.
+    fn max_side(&self) -> f32 {
+        let area = work_area(self.window);
+        let pixels =
+            (area.right - area.left).min(area.bottom - area.top - self.layout.title_bar_height());
+        pixels as f32 / self.layout.scale()
+    }
+
+    /// A minimized window has no real place on screen; the last one counts.
+    fn window_state(&mut self) -> WindowState {
+        // SAFETY: a plain call on this thread's window.
+        if !unsafe { IsIconic(self.window) }.as_bool() {
+            let origin = window_rect(self.window);
+            self.position = Some((origin.left, origin.top));
+        }
+        WindowState {
+            position: self.position,
+            joystick_side: self.layout.joystick_side(),
+            opacity: self.opacity,
+        }
+    }
+
+    /// The window moved, changed size or opacity: save it soon.
+    fn changed(&mut self) {
+        self.unsaved_since = Some(Instant::now());
+    }
+
+    /// Runs on the heartbeat timer.
+    fn tick(&mut self) {
+        self.heartbeat();
+        if self.resizing.is_none()
+            && self
+                .unsaved_since
+                .is_some_and(|since| since.elapsed() >= SAVE_AFTER)
+        {
+            self.save();
+        }
+    }
+
+    fn save(&mut self) {
+        self.unsaved_since = None;
+        let state = self.window_state();
+        window_state::save(&state);
     }
 
     fn leave_joystick_mode(&mut self, reason: &str) {
@@ -227,6 +389,7 @@ impl State {
     fn mode_changed(&mut self, mode: Mode) {
         match mode {
             Mode::Joystick => {
+                self.end_resize();
                 self.game = focus::foreground();
                 let game = self.game.map(focus::describe);
                 info!(target: "overlay", limit = ?self.joystick_limit(), game, "entered joystick mode");
@@ -394,7 +557,7 @@ impl State {
     }
 
     fn rescale(&mut self, scale: f32) {
-        let layout = Layout::new(DEFAULT_JOYSTICK_SIDE, scale);
+        let layout = Layout::new(self.layout.joystick_side(), scale);
         match Surface::new(layout.width(), layout.height()) {
             Ok(surface) => {
                 info!(target: "overlay", scale, "display scaling changed");
@@ -409,12 +572,17 @@ impl State {
 
     /// Returns how long painting and showing took.
     fn repaint(&mut self) -> (Duration, Duration) {
+        self.repaint_at(None)
+    }
+
+    /// Repaints, also moving the window's top-left corner to `at` if given.
+    fn repaint_at(&mut self, at: Option<POINT>) -> (Duration, Duration) {
         let started = Instant::now();
         self.stale_since = None;
         let (mode, knob) = (self.model.mode(), self.model.knob());
         self.painter.paint(&mut self.surface.canvas(), mode, knob);
         let painted = Instant::now();
-        if let Err(err) = self.surface.present(self.window, OPACITY) {
+        if let Err(err) = self.surface.present(self.window, self.opacity.alpha(), at) {
             debug!(target: "overlay", "{err}");
         }
         (painted - started, painted.elapsed())
@@ -452,10 +620,17 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<
             HitKind::PassThrough => HTTRANSPARENT as isize,
         }),
         WM_RBUTTONDOWN => with_state(|state| state.right_click(x, y)).map(|()| 0),
+        WM_LBUTTONDOWN => with_state(|state| state.left_press(x, y)).map(|()| 0),
+        WM_MOUSEWHEEL => {
+            let delta = ((wparam.0 >> 16) & 0xFFFF) as u16 as i16;
+            with_state(|state| state.scroll(delta, x, y)).map(|()| 0)
+        }
+        WM_EXITSIZEMOVE => with_state(State::changed).map(|()| 0),
         WM_LBUTTONUP => {
             // Minimizing and closing send messages back to this window, so
             // they run after the state is released.
             match with_state(|state| state.left_click(x, y))?? {
+                Command::Opacity => {}
                 Command::Minimize => {
                     info!(target: "overlay", "minimized");
                     // SAFETY: a plain call on this thread's window.
@@ -475,7 +650,8 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<
             None
         }
         WM_TIMER if wparam.0 == CAGE_TIMER => with_state(State::cage_tick).map(|()| 0),
-        WM_TIMER if wparam.0 == HEARTBEAT_TIMER => with_state(State::heartbeat).map(|()| 0),
+        WM_TIMER if wparam.0 == HEARTBEAT_TIMER => with_state(State::tick).map(|()| 0),
+        WM_TIMER if wparam.0 == RESIZE_TIMER => with_state(State::resize_tick).map(|()| 0),
         WM_MOVING => {
             // A window that is never activated does not follow the cursor
             // while dragged unless it is moved by hand.
@@ -497,7 +673,11 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<
             None
         }
         WM_DESTROY => {
-            with_state(|state| state.leave_joystick_mode("the window is closing"));
+            with_state(|state| {
+                state.leave_joystick_mode("the window is closing");
+                // Saved now, while the window still has a place on screen.
+                state.save();
+            });
             // SAFETY: ends this thread's message loop.
             unsafe { PostQuitMessage(0) };
             Some(0)
@@ -555,6 +735,53 @@ fn move_window(window: HWND, x: i32, y: i32) {
     let flags = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE;
     // SAFETY: a plain call on this thread's window. Nothing to do on failure.
     let _ = unsafe { SetWindowPos(window, None, x, y, 0, 0, flags) };
+}
+
+fn cursor_position() -> POINT {
+    let mut at = POINT::default();
+    // SAFETY: `at` outlives the call.
+    let _ = unsafe { GetCursorPos(&mut at) };
+    at
+}
+
+/// The physical left button, which is the right one when they are swapped.
+fn left_button_down() -> bool {
+    // SAFETY: plain calls.
+    unsafe {
+        let key = if GetSystemMetrics(SM_SWAPBUTTON) != 0 {
+            VK_RBUTTON
+        } else {
+            VK_LBUTTON
+        };
+        GetAsyncKeyState(i32::from(key.0)) < 0
+    }
+}
+
+/// The work area (screen without the taskbar) of the window's monitor.
+fn work_area(window: HWND) -> RECT {
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: `info` outlives the call and has its size set.
+    unsafe {
+        let monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+        let _ = GetMonitorInfoW(monitor, &mut info);
+    }
+    info.rcWork
+}
+
+/// Whether the title bar at `(x, y)` would be on a screen, so a window saved
+/// on a monitor that is gone does not come back out of reach.
+fn on_a_screen((x, y): (i32, i32), layout: Layout) -> bool {
+    let title_bar = RECT {
+        left: x,
+        top: y,
+        right: x + layout.width(),
+        bottom: y + layout.title_bar_height(),
+    };
+    // SAFETY: a plain call on a local rectangle.
+    !unsafe { MonitorFromRect(&title_bar, MONITOR_DEFAULTTONULL) }.is_invalid()
 }
 
 fn place_in_screen_corner(window: HWND, layout: Layout) {

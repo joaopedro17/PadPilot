@@ -199,6 +199,8 @@ struct Scene {
     radius: f32,
     ring: Rgb,
     knob: (f32, f32),
+    /// Top-left of the resize handle, when it is shown.
+    grip: Option<(f32, f32)>,
 }
 
 impl Scene {
@@ -235,6 +237,10 @@ impl Scene {
             },
             // Up on the stick is up on the screen, where y gets smaller.
             knob: (center.0 + knob.x() * travel, center.1 - knob.y() * travel),
+            grip: (mode == Mode::Normal).then(|| {
+                let grip = layout.grip_rect();
+                (grip.left as f32, grip.top as f32)
+            }),
         }
     }
 
@@ -252,11 +258,32 @@ impl Scene {
             }
             let icon = icon_distance(button, (x - center_x) / unit, (y - center_y) / unit);
             let alpha = match button {
-                Button::Minimize | Button::Close => ICON_ALPHA,
-                Button::Opacity | Button::Settings => INERT_ICON_ALPHA,
+                Button::Opacity | Button::Minimize | Button::Close => ICON_ALPHA,
+                Button::Settings => INERT_ICON_ALPHA,
             };
             pixel.cover(ICON, alpha * coverage(icon * unit) * bar * self.bar_fade);
         }
+        pixel
+    }
+
+    /// The resize handle: three short diagonal lines in the corner, shown
+    /// in normal mode only.
+    fn grip(&self, (x, y): (f32, f32)) -> Pixel {
+        let mut pixel = Pixel::default();
+        let Some(grip) = self.grip else {
+            return pixel;
+        };
+        if x < grip.0 || y < grip.1 {
+            return pixel;
+        }
+        let size = self.width - grip.0;
+        // Lines across the corner, where x + y is constant.
+        let along = (x - grip.0) + (y - grip.1);
+        let line = [1.0, 1.35, 1.7]
+            .map(|at| ((along - at * size).abs() / std::f32::consts::SQRT_2) - 0.7 * self.scale)
+            .into_iter()
+            .fold(f32::INFINITY, f32::min);
+        pixel.cover(ICON, 0.6 * coverage(line));
         pixel
     }
 
@@ -293,7 +320,7 @@ impl Scene {
         let distance = dx.hypot(dy);
         let base = coverage(distance - self.radius);
         if base == 0.0 {
-            return (pixel, Under::default());
+            return (self.grip((x, y)), Under::default());
         }
 
         // Base, from the center outwards: well, groove, ring. Light comes

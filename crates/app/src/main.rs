@@ -12,6 +12,8 @@ mod error;
 mod overlay;
 #[cfg(windows)]
 mod touchpad;
+#[cfg(windows)]
+mod window_state;
 
 use std::process::ExitCode;
 
