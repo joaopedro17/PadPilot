@@ -3,3 +3,4 @@
 
 pub mod gamepad;
 pub mod stick;
+pub mod touchpad;
