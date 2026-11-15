@@ -18,8 +18,8 @@ use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetWindowRect, HWND_TOP, SWP_NOSIZE, SWP_SHOWWINDOW, SetForegroundWindow,
-    SetWindowPos,
+    GetCursorPos, GetWindowRect, HWND_TOP, SW_HIDE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    SetForegroundWindow, SetWindowPos, ShowWindow,
 };
 
 /// Changes are written once the slider has rested this long.
@@ -243,7 +243,15 @@ impl eframe::App for SettingsWindow {
                 self.save();
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            // Hidden the way it was shown: eframe did not see it appear, so
+            // it would take its own hide request as already done.
+            match self.native {
+                // SAFETY: a plain call on this program's own window.
+                Some(window) => unsafe {
+                    let _ = ShowWindow(HWND(window as *mut _), SW_HIDE);
+                },
+                None => ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false)),
+            }
             info!(target: "settings", "settings window hidden");
         }
     }
