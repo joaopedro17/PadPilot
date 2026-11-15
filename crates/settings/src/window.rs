@@ -11,11 +11,24 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, FontId, RichText, TextStyle, Vec2};
 use padpilot_core::config::{Config, LogLevel, SHOW_SETTINGS, TEMPLATE};
 use padpilot_core::stick::{LiftBehavior, StickSettings};
-use tracing::{Level, error, info};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use tracing::{Level, error, info, warn};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetCursorPos, GetWindowRect, HWND_TOP, SWP_NOSIZE, SWP_SHOWWINDOW, SetForegroundWindow,
+    SetWindowPos,
+};
 
 /// Changes are written once the slider has rested this long.
 const SAVE_AFTER: Duration = Duration::from_millis(300);
 const TRAVEL_MM: std::ops::RangeInclusive<f32> = 3.0..=30.0;
+const WINDOW_SIZE: [f32; 2] = [460.0, 640.0];
+/// eframe shows the window after its first frame whatever it was asked, so
+/// a window that must wait hidden starts out here, where nobody sees it.
+const OFF_SCREEN: [f32; 2] = [-32000.0, -32000.0];
 const DEAD_ZONE_PERCENT: std::ops::RangeInclusive<f32> = 0.0..=30.0;
 
 /// What the joystick asked for, from the thread that listens to it.
@@ -39,14 +52,15 @@ pub fn run(hidden: bool) -> ExitCode {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("PadPilot settings")
-            .with_inner_size([460.0, 640.0])
+            .with_inner_size(WINDOW_SIZE)
             .with_resizable(false)
             .with_maximize_button(false)
             .with_visible(!hidden)
             // Waiting hidden must never take focus from the game.
             .with_active(!hidden)
-            .with_icon(icon()),
-        centered: true,
+            .with_icon(icon())
+            .with_position(if hidden { OFF_SCREEN } else { [0.0, 0.0] }),
+        centered: !hidden,
         ..Default::default()
     };
     let window = SettingsWindow {
@@ -57,14 +71,22 @@ pub fn run(hidden: bool) -> ExitCode {
         unsaved_since: None,
         requests: hidden.then(|| Arc::new(Requests::default())),
         quitting: false,
+        frames_until_hidden: if hidden { 2 } else { 0 },
+        native: None,
     };
     let result = eframe::run_native(
         "PadPilot settings",
         options,
         Box::new(|creation| {
+            let mut window = window;
             large_style(&creation.egui_ctx);
             if let Some(requests) = &window.requests {
-                listen(Arc::clone(requests), creation.egui_ctx.clone());
+                window.native = native_window(creation);
+                listen(
+                    Arc::clone(requests),
+                    creation.egui_ctx.clone(),
+                    window.native,
+                );
             }
             Ok(Box::new(window))
         }),
@@ -95,14 +117,37 @@ struct SettingsWindow {
     /// Set when started hidden by the joystick.
     requests: Option<Arc<Requests>>,
     quitting: bool,
+    /// Counts down the first frames, after which eframe has shown the window
+    /// (off screen) and it can be hidden for real.
+    frames_until_hidden: u8,
+    /// The Windows handle, which the listening thread shows the window with.
+    native: Option<isize>,
+}
+
+/// The window's Windows handle, as a number so it can go to another thread.
+fn native_window(creation: &eframe::CreationContext<'_>) -> Option<isize> {
+    match creation.window_handle().map(|handle| handle.as_raw()) {
+        Ok(RawWindowHandle::Win32(handle)) => Some(handle.hwnd.get()),
+        _ => {
+            warn!(target: "settings", "no window handle; showing goes through eframe");
+            None
+        }
+    }
 }
 
 /// Reads the joystick's requests on a separate thread and wakes the window.
-fn listen(requests: Arc<Requests>, ctx: egui::Context) {
+/// A hidden eframe window reacts slowly, so the window is shown from here,
+/// straight through Windows; eframe then paints it.
+fn listen(requests: Arc<Requests>, ctx: egui::Context, native: Option<isize>) {
     std::thread::spawn(move || {
         for byte in std::io::stdin().lock().bytes() {
             match byte {
-                Ok(SHOW_SETTINGS) => requests.show.store(true, Ordering::SeqCst),
+                Ok(SHOW_SETTINGS) => {
+                    if let Some(window) = native {
+                        show_centered(HWND(window as *mut _));
+                    }
+                    requests.show.store(true, Ordering::SeqCst);
+                }
                 Ok(_) => continue,
                 Err(_) => break,
             }
@@ -111,6 +156,39 @@ fn listen(requests: Arc<Requests>, ctx: egui::Context) {
         requests.quit.store(true, Ordering::SeqCst);
         ctx.request_repaint();
     });
+}
+
+/// Shows the window in the middle of the screen the cursor is on, in front.
+fn show_centered(window: HWND) {
+    // SAFETY: plain calls on a window of this process; every pointer is to
+    // a local that outlives its call.
+    unsafe {
+        let mut cursor = POINT::default();
+        let _ = GetCursorPos(&mut cursor);
+        let mut monitor = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let _ = GetMonitorInfoW(
+            MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST),
+            &mut monitor,
+        );
+        let mut size = RECT::default();
+        let _ = GetWindowRect(window, &mut size);
+        let area = monitor.rcWork;
+        let x = area.left + (area.right - area.left - (size.right - size.left)) / 2;
+        let y = area.top + (area.bottom - area.top - (size.bottom - size.top)) / 2;
+        let _ = SetWindowPos(
+            window,
+            Some(HWND_TOP),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
+        let _ = SetForegroundWindow(window);
+    }
 }
 
 fn read(path: &Path) -> (Config, Option<String>) {
@@ -129,6 +207,15 @@ impl eframe::App for SettingsWindow {
         let Some(requests) = &self.requests else {
             return;
         };
+        if self.frames_until_hidden > 0 {
+            self.frames_until_hidden -= 1;
+            if self.frames_until_hidden == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                info!(target: "settings", "waiting hidden");
+            } else {
+                ctx.request_repaint();
+            }
+        }
         if requests.quit.load(Ordering::SeqCst) && !self.quitting {
             self.quitting = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -139,8 +226,16 @@ impl eframe::App for SettingsWindow {
             if self.unsaved_since.is_none() {
                 (self.config, self.problem) = read(&self.path);
             }
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.frames_until_hidden = 0;
+            // Without a handle, the listening thread could not show it.
+            if self.native.is_none() {
+                if let Some(screen) = ctx.input(|input| input.viewport().monitor_size) {
+                    let middle = (screen - egui::Vec2::from(WINDOW_SIZE)) / 2.0;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(middle.to_pos2()));
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
             info!(target: "settings", "settings window shown");
         }
         if !self.quitting && ctx.input(|input| input.viewport().close_requested()) {

@@ -9,7 +9,15 @@ license.workspace = true
 eframe = "0.37.0"
 padpilot-core.workspace = true
 padpilot-logging.workspace = true
+raw-window-handle = "0.6"
 tracing.workspace = true
 
 [build-dependencies]
 padpilot-icon = { path = "../icon" }
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = [
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+]

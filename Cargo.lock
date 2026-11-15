@@ -2413,7 +2413,9 @@ dependencies = [
  "padpilot-core",
  "padpilot-icon",
  "padpilot-logging",
+ "raw-window-handle",
  "tracing",
+ "windows",
 ]
 
 [[package]]
