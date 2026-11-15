@@ -19,6 +19,13 @@ jobs:
       - uses: actions/checkout@v4
       # The checkout leaves out the tag's message, which becomes the notes.
       - run: git fetch --force origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+      # Releases come from main; a tag on develop by mistake publishes nothing.
+      - name: The tagged commit is on main
+        shell: pwsh
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "${{ github.sha }}" origin/main
+          if ($LASTEXITCODE -ne 0) { throw "${{ github.ref_name }} is not on main" }
       - name: The version in Cargo.toml matches the tag
         shell: pwsh
         run: |
