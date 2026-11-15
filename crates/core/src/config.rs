@@ -8,6 +8,10 @@ use crate::stick::{
     DEFAULT_DEAD_ZONE, DEFAULT_FULL_TRAVEL, LiftBehavior, SettingsError, StickSettings,
 };
 
+/// Sent by the joystick to the settings window, which waits hidden in the
+/// background so it appears at once.
+pub const SHOW_SETTINGS: u8 = b's';
+
 /// Written for new users. Must hold exactly the defaults.
 pub const TEMPLATE: &str = "\
 # PadPilot settings. Changes take effect the next time PadPilot starts.

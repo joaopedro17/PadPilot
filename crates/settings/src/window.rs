@@ -1,12 +1,15 @@
 //! The window: large sliders and buttons, so a trackpad is all it takes, and
 //! no text fields that would need the on-screen keyboard.
 
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, FontId, RichText, TextStyle, Vec2};
-use padpilot_core::config::{Config, LogLevel, TEMPLATE};
+use padpilot_core::config::{Config, LogLevel, SHOW_SETTINGS, TEMPLATE};
 use padpilot_core::stick::{LiftBehavior, StickSettings};
 use tracing::{Level, error, info};
 
@@ -15,27 +18,33 @@ const SAVE_AFTER: Duration = Duration::from_millis(300);
 const TRAVEL_MM: std::ops::RangeInclusive<f32> = 3.0..=30.0;
 const DEAD_ZONE_PERCENT: std::ops::RangeInclusive<f32> = 0.0..=30.0;
 
-pub fn run() -> ExitCode {
+/// What the joystick asked for, from the thread that listens to it.
+#[derive(Default)]
+struct Requests {
+    show: AtomicBool,
+    /// The joystick closed: time to go.
+    quit: AtomicBool,
+}
+
+pub fn run(hidden: bool) -> ExitCode {
+    // Never returns normally: see the end.
     let logs = padpilot_logging::logs_dir();
-    let Ok(_log_guard) = padpilot_logging::init(&logs, "settings", Level::INFO) else {
+    let Ok(log_guard) = padpilot_logging::init(&logs, "settings", Level::INFO) else {
         return ExitCode::FAILURE;
     };
     let path = padpilot_logging::config_path();
-    let (config, problem) = match std::fs::read_to_string(&path) {
-        Ok(text) => match Config::parse(&text) {
-            Ok(config) => (config, None),
-            Err(err) => (Config::default(), Some(err.to_string())),
-        },
-        Err(_) => (Config::default(), None),
-    };
-    info!(target: "settings", path = %path.display(), ?config, ?problem, "settings window opened");
+    let (config, problem) = read(&path);
+    info!(target: "settings", path = %path.display(), ?config, ?problem, hidden, "settings window started");
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("PadPilot settings")
             .with_inner_size([460.0, 640.0])
             .with_resizable(false)
-            .with_maximize_button(false),
+            .with_maximize_button(false)
+            .with_visible(!hidden)
+            // Waiting hidden must never take focus from the game.
+            .with_active(!hidden),
         centered: true,
         ..Default::default()
     };
@@ -45,25 +54,34 @@ pub fn run() -> ExitCode {
         config,
         problem,
         unsaved_since: None,
+        requests: hidden.then(|| Arc::new(Requests::default())),
+        quitting: false,
     };
     let result = eframe::run_native(
         "PadPilot settings",
         options,
         Box::new(|creation| {
             large_style(&creation.egui_ctx);
+            if let Some(requests) = &window.requests {
+                listen(Arc::clone(requests), creation.egui_ctx.clone());
+            }
             Ok(Box::new(window))
         }),
     );
-    match result {
+    let code = match result {
         Ok(()) => {
             info!(target: "settings", "settings window closed");
-            ExitCode::SUCCESS
+            0
         }
         Err(err) => {
             error!(target: "settings", "cannot show the settings window: {err}");
-            ExitCode::FAILURE
+            1
         }
-    }
+    };
+    // The graphics library can leave the process hanging after its window
+    // is gone; flush the log, then end the process for sure.
+    drop(log_guard);
+    std::process::exit(code)
 }
 
 struct SettingsWindow {
@@ -73,9 +91,67 @@ struct SettingsWindow {
     /// What was wrong with the file when the window opened.
     problem: Option<String>,
     unsaved_since: Option<Instant>,
+    /// Set when started hidden by the joystick.
+    requests: Option<Arc<Requests>>,
+    quitting: bool,
+}
+
+/// Reads the joystick's requests on a separate thread and wakes the window.
+fn listen(requests: Arc<Requests>, ctx: egui::Context) {
+    std::thread::spawn(move || {
+        for byte in std::io::stdin().lock().bytes() {
+            match byte {
+                Ok(SHOW_SETTINGS) => requests.show.store(true, Ordering::SeqCst),
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+            ctx.request_repaint();
+        }
+        requests.quit.store(true, Ordering::SeqCst);
+        ctx.request_repaint();
+    });
+}
+
+fn read(path: &Path) -> (Config, Option<String>) {
+    match std::fs::read_to_string(path) {
+        Ok(text) => match Config::parse(&text) {
+            Ok(config) => (config, None),
+            Err(err) => (Config::default(), Some(err.to_string())),
+        },
+        Err(_) => (Config::default(), None),
+    }
 }
 
 impl eframe::App for SettingsWindow {
+    /// Shows and hides the window for the joystick; closing only hides it.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let Some(requests) = &self.requests else {
+            return;
+        };
+        if requests.quit.load(Ordering::SeqCst) && !self.quitting {
+            self.quitting = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        if requests.show.swap(false, Ordering::SeqCst) {
+            // The file may have changed since it was last shown.
+            if self.unsaved_since.is_none() {
+                (self.config, self.problem) = read(&self.path);
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            info!(target: "settings", "settings window shown");
+        }
+        if !self.quitting && ctx.input(|input| input.viewport().close_requested()) {
+            if self.unsaved_since.is_some() {
+                self.save();
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            info!(target: "settings", "settings window hidden");
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ui, |ui| {
             let before = self.config.clone();

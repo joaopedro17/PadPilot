@@ -1,6 +1,9 @@
-//! PadPilot settings window. Opened by the joystick's Settings button; every
-//! change is written to `config.toml` at once, and the joystick picks it up
-//! while it runs.
+//! PadPilot settings window. Every change is written to `config.toml` at
+//! once, and the joystick picks it up while it runs.
+//!
+//! The joystick starts it with `--hidden` when it starts, and shows it when
+//! its Settings button is clicked, so it appears at once. Started without
+//! arguments, it simply opens.
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
@@ -11,7 +14,7 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     #[cfg(windows)]
-    return window::run();
+    return window::run(std::env::args().any(|arg| arg == "--hidden"));
 
     #[cfg(not(windows))]
     {
