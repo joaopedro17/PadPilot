@@ -41,8 +41,9 @@ use windows::Win32::UI::Input::HRAWINPUT;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
 use windows::Win32::UI::WindowsAndMessaging::{
     ClipCursor, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos,
-    GetMessageW, GetSystemMetrics, GetWindowRect, HTCAPTION, HTCLIENT, HTTRANSPARENT, IDC_ARROW,
-    IsIconic, KillTimer, LoadCursorW, MA_NOACTIVATE, MSG, PostQuitMessage, RegisterClassExW,
+    GetMessageW, GetSystemMetrics, GetWindowRect, HICON, HTCAPTION, HTCLIENT, HTTRANSPARENT,
+    IDC_ARROW, IMAGE_ICON, IsIconic, KillTimer, LR_DEFAULTCOLOR, LoadCursorW, LoadIconW,
+    LoadImageW, MA_NOACTIVATE, MSG, PostQuitMessage, RegisterClassExW, SM_CXSMICON, SM_CYSMICON,
     SM_SWAPBUTTON, SPI_GETWORKAREA, SW_MINIMIZE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
     SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetTimer, SetWindowPos, ShowWindow,
     SystemParametersInfoW, USER_DEFAULT_SCREEN_DPI, WM_ACTIVATE, WM_DESTROY, WM_DPICHANGED,
@@ -50,7 +51,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_MOVING, WM_NCHITTEST, WM_RBUTTONDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_APPWINDOW, WS_EX_LAYERED,
     WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU,
 };
-use windows::core::w;
+use windows::core::{PCWSTR, w};
 
 use crate::controller::{self, VirtualController};
 use crate::error::Error;
@@ -61,6 +62,9 @@ use settings::SettingsWindow;
 use surface::Surface;
 use telemetry::{Telemetry, Timing};
 use watchdog::Watchdog;
+
+/// The icon's resource number, as `build.rs` embeds it.
+const ICON_ID: u16 = 1;
 
 /// How long joystick mode may last while the watchdog is not running.
 const UNWATCHED_JOYSTICK_LIMIT: Duration = Duration::from_secs(60);
@@ -850,6 +854,20 @@ fn create_window() -> Result<HWND, Error> {
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
             hCursor: LoadCursorW(None, IDC_ARROW).map_err(failed)?,
+            // The icon built into this program (see build.rs), for the
+            // taskbar and Alt+Tab. A missing icon leaves the default one.
+            hIcon: LoadIconW(Some(instance), PCWSTR(ICON_ID as usize as *const u16))
+                .unwrap_or_default(),
+            hIconSm: LoadImageW(
+                Some(instance),
+                PCWSTR(ICON_ID as usize as *const u16),
+                IMAGE_ICON,
+                GetSystemMetrics(SM_CXSMICON),
+                GetSystemMetrics(SM_CYSMICON),
+                LR_DEFAULTCOLOR,
+            )
+            .map(|icon| HICON(icon.0))
+            .unwrap_or_default(),
             lpszClassName: w!("PadPilotOverlay"),
             ..Default::default()
         };

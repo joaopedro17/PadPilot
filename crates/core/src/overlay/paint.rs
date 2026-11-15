@@ -30,9 +30,28 @@ const KNOB_RIM: Rgb = [0.3, 0.3, 0.33];
 /// Radii as fractions of the base radius.
 const RING_INNER: f32 = 0.9;
 const WELL_RADIUS: f32 = 0.86;
+/// The icon's ring is thicker, so it still shows at 16 pixels.
+const ICON_RING_INNER: f32 = 0.76;
+const ICON_WELL_RADIUS: f32 = 0.7;
+/// The icon's knob is pushed up a little: throttle.
+const ICON_KNOB: (f32, f32) = (0.0, 0.35);
 const KNOB_RADIUS: f32 = 0.4;
 /// The knob's flat rim, as a fraction of the knob radius.
 const KNOB_FACE: f32 = 0.86;
+
+/// The program's icon: the joystick alone, ring lit, filling a square canvas.
+pub fn paint_icon(canvas: &mut Canvas<'_>) {
+    let scene = Scene::icon(canvas.width.min(canvas.height) as f32);
+    let rows = canvas
+        .pixels
+        .chunks_exact_mut(canvas.width.max(1))
+        .take(canvas.height);
+    for (y, row) in rows.enumerate() {
+        for (x, pixel) in row.iter_mut().enumerate() {
+            *pixel = scene.joystick((x as f32 + 0.5, y as f32 + 0.5)).pack();
+        }
+    }
+}
 
 /// Draws every pixel from scratch. The reference for [`Painter`].
 pub fn paint(canvas: &mut Canvas<'_>, layout: &Layout, mode: Mode, knob: Deflection) {
@@ -196,6 +215,9 @@ struct Scene {
     center: (f32, f32),
     radius: f32,
     ring: Rgb,
+    /// Where the ring and the well begin, as fractions of `radius`.
+    ring_inner: f32,
+    well: f32,
     knob: (f32, f32),
     /// Top-left of the resize handle, when it is shown.
     grip: Option<(f32, f32)>,
@@ -233,12 +255,38 @@ impl Scene {
             } else {
                 RING
             },
+            ring_inner: RING_INNER,
+            well: WELL_RADIUS,
             // Up on the stick is up on the screen, where y gets smaller.
             knob: (center.0 + knob.x() * travel, center.1 - knob.y() * travel),
             grip: (mode == Mode::Normal).then(|| {
                 let grip = layout.grip_rect();
                 (grip.left as f32, grip.top as f32)
             }),
+        }
+    }
+
+    fn icon(size: f32) -> Self {
+        let center = (size / 2.0, size / 2.0);
+        let radius = size / 2.0 - size / 64.0;
+        let travel = (ICON_WELL_RADIUS - KNOB_RADIUS) * radius;
+        Self {
+            scale: size / 240.0,
+            width: size,
+            bar_height: 0.0,
+            bar_fade: 0.0,
+            buttons: Button::ALL.map(|button| (button, 0.0, 0.0)),
+            button_size: 0.0,
+            center,
+            radius,
+            ring: RING_ACTIVE,
+            ring_inner: ICON_RING_INNER,
+            well: ICON_WELL_RADIUS,
+            knob: (
+                center.0 + ICON_KNOB.0 * travel,
+                center.1 - ICON_KNOB.1 * travel,
+            ),
+            grip: None,
         }
     }
 
@@ -324,8 +372,8 @@ impl Scene {
         // from the top, so the ring is brighter where it faces up.
         let well = shade(WELL, 1.0 - 0.35 * (distance / self.radius).powi(2));
         let lit_ring = shade(self.ring, 1.0 - 0.25 * dy / distance.max(1.0));
-        let in_groove = 1.0 - coverage(distance - WELL_RADIUS * self.radius);
-        let in_ring = 1.0 - coverage(distance - RING_INNER * self.radius);
+        let in_groove = 1.0 - coverage(distance - self.well * self.radius);
+        let in_ring = 1.0 - coverage(distance - self.ring_inner * self.radius);
         pixel.cover(mix(mix(well, GROOVE, in_groove), lit_ring, in_ring), base);
         (pixel, Under { base, in_groove })
     }

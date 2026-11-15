@@ -1,7 +1,7 @@
 use padpilot_core::gamepad::GamepadState;
 use padpilot_core::overlay::layout::{Button, Layout, Rect, Region};
 use padpilot_core::overlay::model::{Command, HitKind, Mode, Overlay};
-use padpilot_core::overlay::paint::{Canvas, Painter, paint};
+use padpilot_core::overlay::paint::{Canvas, Painter, paint, paint_icon};
 use padpilot_core::stick::{Contact, Deflection, LiftBehavior, Point, StickSettings};
 
 // ---- layout ----
@@ -439,6 +439,27 @@ fn the_resize_handle_is_drawn_only_in_normal_mode() {
     };
     assert!(drawn(&render(Mode::Normal, Deflection::NEUTRAL)) > 20);
     assert_eq!(drawn(&render(Mode::Joystick, Deflection::NEUTRAL)), 0);
+}
+
+#[test]
+fn the_icon_is_the_joystick_with_its_ring_lit_at_every_size() {
+    for size in [16, 32, 256] {
+        let mut pixels = vec![0xDEADBEEF; size * size];
+        paint_icon(&mut Canvas {
+            width: size,
+            height: size,
+            pixels: &mut pixels,
+        });
+        let at = |x: usize, y: usize| pixels[y * size + x];
+        let alpha = |p: u32| p >> 24;
+        assert_eq!(at(0, 0), 0, "{size}: corner");
+        assert_eq!(at(size - 1, size - 1), 0, "{size}: corner");
+        assert_eq!(alpha(at(size / 2, size / 2)), 255, "{size}: middle");
+        // On the ring, left of center: blue.
+        let ring = at(size / 30 + 1, size / 2);
+        let (r, b) = ((ring >> 16) & 0xFF, ring & 0xFF);
+        assert!(b > r + 40, "{size}: ring r={r} b={b}");
+    }
 }
 
 #[test]

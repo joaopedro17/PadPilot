@@ -2376,6 +2376,7 @@ name = "padpilot"
 version = "0.8.0-dev"
 dependencies = [
  "padpilot-core",
+ "padpilot-icon",
  "padpilot-logging",
  "tracing",
  "vigem-client",
@@ -2392,6 +2393,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "padpilot-icon"
+version = "0.8.0-dev"
+
+[[package]]
 name = "padpilot-logging"
 version = "0.8.0-dev"
 dependencies = [
@@ -2406,6 +2411,7 @@ version = "0.8.0-dev"
 dependencies = [
  "eframe",
  "padpilot-core",
+ "padpilot-icon",
  "padpilot-logging",
  "tracing",
 ]
@@ -2415,6 +2421,7 @@ name = "padpilot-watchdog"
 version = "0.8.0-dev"
 dependencies = [
  "padpilot-core",
+ "padpilot-icon",
  "padpilot-logging",
  "tracing",
  "windows",

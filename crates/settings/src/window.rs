@@ -44,7 +44,8 @@ pub fn run(hidden: bool) -> ExitCode {
             .with_maximize_button(false)
             .with_visible(!hidden)
             // Waiting hidden must never take focus from the game.
-            .with_active(!hidden),
+            .with_active(!hidden)
+            .with_icon(icon()),
         centered: true,
         ..Default::default()
     };
@@ -291,6 +292,33 @@ impl SettingsWindow {
             error!(target: "settings", "cannot open the logs folder: {err}");
         }
     }
+}
+
+/// The icon's 64-pixel image, from the same file that is built into the
+/// program. Without it, the window shows egui's own logo.
+fn icon() -> Arc<egui::IconData> {
+    const ICO: &[u8] = include_bytes!("../../../assets/padpilot.ico");
+    const SIDE: usize = 64;
+    let image = (0..usize::from(u16::from_le_bytes([ICO[4], ICO[5]]))).find_map(|index| {
+        let entry = &ICO[6 + 16 * index..22 + 16 * index];
+        let offset = u32::from_le_bytes(entry[12..16].try_into().ok()?) as usize;
+        (usize::from(entry[0]) == SIDE).then(|| &ICO[offset..])
+    });
+    let Some(image) = image else {
+        return Arc::default();
+    };
+    // A 32-bit bitmap after its 40-byte header, bottom row first, BGRA.
+    let pixels = &image[40..40 + SIDE * SIDE * 4];
+    let rgba = pixels
+        .chunks(SIDE * 4)
+        .rev()
+        .flat_map(|row| row.chunks(4).flat_map(|p| [p[2], p[1], p[0], p[3]]))
+        .collect();
+    Arc::new(egui::IconData {
+        rgba,
+        width: SIDE as u32,
+        height: SIDE as u32,
+    })
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
