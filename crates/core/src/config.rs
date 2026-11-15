@@ -92,17 +92,8 @@ impl Config {
         let stick = &self.stick;
         document["stick"]["full_travel_mm"] = value(rounded(stick.full_travel(), 1));
         document["stick"]["dead_zone"] = value(rounded(stick.dead_zone(), 2));
-        document["stick"]["lift_behavior"] = value(match stick.lift_behavior() {
-            LiftBehavior::ReturnToCenter => "return_to_center",
-            LiftBehavior::HoldPosition => "hold_position",
-        });
-        document["log"]["level"] = value(match self.log_level {
-            LogLevel::Error => "error",
-            LogLevel::Warn => "warn",
-            LogLevel::Info => "info",
-            LogLevel::Debug => "debug",
-            LogLevel::Trace => "trace",
-        });
+        document["stick"]["lift_behavior"] = value(lift_name(stick.lift_behavior()));
+        document["log"]["level"] = value(level_name(self.log_level));
         document.to_string()
     }
 
@@ -132,6 +123,24 @@ impl Config {
             stick,
             log_level: file.log.level,
         })
+    }
+}
+
+/// As the file spells them.
+fn lift_name(lift: LiftBehavior) -> &'static str {
+    match lift {
+        LiftBehavior::ReturnToCenter => "return_to_center",
+        LiftBehavior::HoldPosition => "hold_position",
+    }
+}
+
+fn level_name(level: LogLevel) -> &'static str {
+    match level {
+        LogLevel::Error => "error",
+        LogLevel::Warn => "warn",
+        LogLevel::Info => "info",
+        LogLevel::Debug => "debug",
+        LogLevel::Trace => "trace",
     }
 }
 

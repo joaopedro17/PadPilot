@@ -1,7 +1,7 @@
 //! Starts the watchdog process and keeps it informed.
 
 use std::io::Write;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin};
 
 use padpilot_core::watchdog::Message;
 use tracing::info;
@@ -18,20 +18,7 @@ pub struct Watchdog {
 impl Watchdog {
     /// Starts `padpilot-watchdog.exe` from this program's folder.
     pub fn start() -> Result<Self, Error> {
-        let exe = std::env::current_exe()
-            .map_err(|err| Error::caused("cannot find this program's folder", err))?
-            .with_file_name(EXE);
-        let mut child = Command::new(&exe)
-            .arg(std::process::id().to_string())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|err| Error::caused(&format!("cannot start {}", exe.display()), err))?;
-        let pipe = child
-            .stdin
-            .take()
-            .ok_or_else(|| Error::new("the watchdog has no input pipe"))?;
+        let (child, pipe) = super::helper::start(EXE, &[&std::process::id().to_string()])?;
         info!(target: "watchdog", pid = child.id(), "watchdog started");
         Ok(Self { child, pipe })
     }

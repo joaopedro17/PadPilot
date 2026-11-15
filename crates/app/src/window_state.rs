@@ -20,15 +20,9 @@ pub fn load() -> WindowState {
     state
 }
 
-/// Written to a temporary file first, so a crash mid-write never leaves a
-/// half-written file behind.
 pub fn save(state: &WindowState) {
     let path = path();
-    let temporary = path.with_extension("toml.new");
-    let written = std::fs::create_dir_all(settings_dir())
-        .and_then(|()| std::fs::write(&temporary, state.to_toml().replace('\n', "\r\n")))
-        .and_then(|()| std::fs::rename(&temporary, &path));
-    match written {
+    match padpilot_logging::write_text_file(&path, &state.to_toml()) {
         Ok(()) => info!(target: "overlay", ?state, "window state saved"),
         Err(err) => {
             warn!(target: "overlay", path = %path.display(), "cannot save the window state: {err}")

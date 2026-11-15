@@ -41,3 +41,20 @@ fn writes_timestamped_lines_and_records_panics() {
 
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn text_files_get_windows_line_endings_a_folder_and_no_leftovers() {
+    let dir = std::env::temp_dir().join(format!("padpilot-write-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("deeper").join("settings.toml");
+    padpilot_logging::write_text_file(&path, "a = 1\nb = 2\r\n").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "a = 1\r\nb = 2\r\n"
+    );
+    padpilot_logging::write_text_file(&path, "c = 3\n").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "c = 3\r\n");
+    let files: Vec<_> = std::fs::read_dir(path.parent().unwrap()).unwrap().collect();
+    assert_eq!(files.len(), 1, "only the file itself is left");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

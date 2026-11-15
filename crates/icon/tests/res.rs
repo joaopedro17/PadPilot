@@ -1,8 +1,11 @@
 use padpilot_icon::{ICON_ID, res_file};
 
+/// The first fake image: over 256 bytes, so its size needs two bytes.
+const FIRST: [u8; 300] = [7; 300];
+
 /// A minimal .ico with two fake images.
 fn ico() -> Vec<u8> {
-    let images: [&[u8]; 2] = [b"first image!", b"second"];
+    let images: [&[u8]; 2] = [&FIRST, b"second"];
     let mut out = vec![0, 0, 1, 0, 2, 0];
     let mut offset = 6 + 16 * 2;
     for (i, image) in images.iter().enumerate() {
@@ -51,7 +54,7 @@ fn every_image_becomes_an_icon_resource_and_the_group_lists_them() {
     assert_eq!((found[0].0, found[0].2.len()), (0, 0));
     assert_eq!(
         (found[1].0, found[1].1, &found[1].2[..]),
-        (3, 1, &b"first image!"[..])
+        (3, 1, &FIRST[..])
     );
     assert_eq!(
         (found[2].0, found[2].1, &found[2].2[..]),
@@ -70,4 +73,8 @@ fn every_image_becomes_an_icon_resource_and_the_group_lists_them() {
 fn something_that_is_not_an_ico_is_refused() {
     assert_eq!(res_file(b"PNG not an icon"), None);
     assert_eq!(res_file(&ico()[..30]), None);
+    // An image claiming to be bigger than the file (top byte of its size set).
+    let mut huge = ico();
+    huge[6 + 11] = 1;
+    assert_eq!(res_file(&huge), None);
 }

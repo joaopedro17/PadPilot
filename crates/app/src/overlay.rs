@@ -9,6 +9,7 @@
 
 mod failsafe;
 mod focus;
+mod helper;
 mod settings;
 mod surface;
 mod telemetry;
@@ -245,12 +246,15 @@ struct State {
 }
 
 impl State {
-    fn hit(&self, screen_x: i32, screen_y: i32) -> HitKind {
+    /// What lies under a point given in screen coordinates.
+    fn region_on_screen(&self, screen_x: i32, screen_y: i32) -> Region {
         let origin = window_rect(self.window);
-        let region = self
-            .layout
-            .region_at(screen_x - origin.left, screen_y - origin.top);
-        self.model.hit(region)
+        self.layout
+            .region_at(screen_x - origin.left, screen_y - origin.top)
+    }
+
+    fn hit(&self, screen_x: i32, screen_y: i32) -> HitKind {
+        self.model.hit(self.region_on_screen(screen_x, screen_y))
     }
 
     fn right_click(&mut self, x: i32, y: i32) {
@@ -332,13 +336,11 @@ impl State {
 
     /// Scrolling over the joystick grows or shrinks it around its center.
     fn scroll(&mut self, delta: i16, screen_x: i32, screen_y: i32) {
-        let origin = window_rect(self.window);
-        let region = self
-            .layout
-            .region_at(screen_x - origin.left, screen_y - origin.top);
-        if !self.model.can_resize() || region != Region::Joystick {
+        if !self.model.can_resize() || self.region_on_screen(screen_x, screen_y) != Region::Joystick
+        {
             return;
         }
+        let origin = window_rect(self.window);
         let side = self
             .layout
             .side_after_scroll(f32::from(delta) / WHEEL_NOTCH);

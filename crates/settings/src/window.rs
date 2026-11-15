@@ -364,18 +364,8 @@ impl SettingsWindow {
     fn save(&mut self) {
         self.unsaved_since = None;
         let current = std::fs::read_to_string(&self.path).unwrap_or_else(|_| TEMPLATE.to_owned());
-        let text = self
-            .config
-            .write_into(&current.replace("\r\n", "\n"))
-            .replace('\n', "\r\n");
-        let temporary = self.path.with_extension("toml.new");
-        let written = self
-            .path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| std::fs::write(&temporary, text))
-            .and_then(|()| std::fs::rename(&temporary, &self.path));
-        match written {
+        let text = self.config.write_into(&current.replace("\r\n", "\n"));
+        match padpilot_logging::write_text_file(&self.path, &text) {
             Ok(()) => {
                 self.problem = None;
                 info!(target: "settings", config = ?self.config, "settings saved");

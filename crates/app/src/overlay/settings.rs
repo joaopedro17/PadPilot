@@ -2,7 +2,7 @@
 //! button shows it at once.
 
 use std::io::Write;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin};
 
 use padpilot_core::config::SHOW_SETTINGS;
 use tracing::info;
@@ -20,18 +20,7 @@ pub struct SettingsWindow {
 impl SettingsWindow {
     /// Starts it hidden. It closes when this program closes.
     pub fn start() -> Result<Self, Error> {
-        let exe = std::env::current_exe()
-            .map_err(|err| Error::caused("cannot find this program's folder", err))?
-            .with_file_name(EXE);
-        let mut child = Command::new(&exe)
-            .arg("--hidden")
-            .stdin(Stdio::piped())
-            .spawn()
-            .map_err(|err| Error::caused(&format!("cannot start {}", exe.display()), err))?;
-        let pipe = child
-            .stdin
-            .take()
-            .ok_or_else(|| Error::new("the settings window has no input pipe"))?;
+        let (child, pipe) = super::helper::start(EXE, &["--hidden"])?;
         info!(target: "overlay", pid = child.id(), "settings window started hidden");
         Ok(Self { child, pipe })
     }

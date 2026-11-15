@@ -42,13 +42,18 @@ const KNOB_FACE: f32 = 0.86;
 /// The program's icon: the joystick alone, ring lit, filling a square canvas.
 pub fn paint_icon(canvas: &mut Canvas<'_>) {
     let scene = Scene::icon(canvas.width.min(canvas.height) as f32);
+    fill(canvas, |_, at| scene.joystick(at));
+}
+
+/// Gives every pixel the color for its row and its center point.
+fn fill(canvas: &mut Canvas<'_>, color: impl Fn(usize, (f32, f32)) -> Pixel) {
     let rows = canvas
         .pixels
         .chunks_exact_mut(canvas.width.max(1))
         .take(canvas.height);
     for (y, row) in rows.enumerate() {
         for (x, pixel) in row.iter_mut().enumerate() {
-            *pixel = scene.joystick((x as f32 + 0.5, y as f32 + 0.5)).pack();
+            *pixel = color(y, (x as f32 + 0.5, y as f32 + 0.5)).pack();
         }
     }
 }
@@ -57,21 +62,13 @@ pub fn paint_icon(canvas: &mut Canvas<'_>) {
 pub fn paint(canvas: &mut Canvas<'_>, layout: &Layout, mode: Mode, knob: Deflection) {
     let scene = Scene::new(layout, mode, knob);
     let bar_height = layout.title_bar_height() as usize;
-    let rows = canvas
-        .pixels
-        .chunks_exact_mut(canvas.width.max(1))
-        .take(canvas.height);
-    for (y, row) in rows.enumerate() {
-        for (x, pixel) in row.iter_mut().enumerate() {
-            let at = (x as f32 + 0.5, y as f32 + 0.5);
-            let color = if y < bar_height {
-                scene.title_bar(at)
-            } else {
-                scene.joystick(at)
-            };
-            *pixel = color.pack();
+    fill(canvas, |y, at| {
+        if y < bar_height {
+            scene.title_bar(at)
+        } else {
+            scene.joystick(at)
         }
-    }
+    });
 }
 
 /// Draws the same pixels as [`paint`], fast enough to follow the touchpad:

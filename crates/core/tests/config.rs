@@ -126,3 +126,22 @@ fn writing_into_a_broken_file_starts_from_the_explained_template() {
     assert!(text.contains("# Sensitivity"), "{text}");
     assert_eq!(Config::parse(&text).unwrap(), changed());
 }
+
+#[test]
+fn every_choice_is_written_so_it_reads_back() {
+    let levels = [
+        LogLevel::Error,
+        LogLevel::Warn,
+        LogLevel::Info,
+        LogLevel::Debug,
+        LogLevel::Trace,
+    ];
+    let lifts = [LiftBehavior::ReturnToCenter, LiftBehavior::HoldPosition];
+    for (level, lift) in levels.into_iter().zip(lifts.into_iter().cycle()) {
+        let config = Config {
+            stick: StickSettings::new(lift, 10.0, 0.05).unwrap(),
+            log_level: level,
+        };
+        assert_eq!(Config::parse(&config.write_into(TEMPLATE)).unwrap(), config);
+    }
+}

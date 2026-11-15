@@ -39,6 +39,17 @@ pub fn config_path() -> PathBuf {
     settings_dir().join("config.toml")
 }
 
+/// Writes a text file the user may open in Notepad (Windows line endings),
+/// through a temporary file, so a crash mid-write never leaves half a file.
+pub fn write_text_file(path: &Path, text: &str) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let temporary = path.with_extension("new");
+    std::fs::write(&temporary, text.replace("\r\n", "\n").replace('\n', "\r\n"))?;
+    std::fs::rename(&temporary, path)
+}
+
 /// Starts logging to `<dir>/<component>.<date>.log` through a background
 /// writer, and makes panics leave a trace in it.
 pub fn init(dir: &Path, component: &str, level: Level) -> io::Result<LogGuard> {

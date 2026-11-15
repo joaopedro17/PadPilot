@@ -35,31 +35,46 @@ pub fn embed(ico: &str) {
 /// The images of an `.ico` file as a compiled resource file: one icon
 /// resource per image, and a group that lists them under [`ICON_ID`].
 pub fn res_file(ico: &[u8]) -> Option<Vec<u8>> {
-    let word = |at: usize| Some(u16::from_le_bytes(ico.get(at..at + 2)?.try_into().ok()?));
-    let dword = |at: usize| Some(u32::from_le_bytes(ico.get(at..at + 4)?.try_into().ok()?));
-    if word(0)? != 0 || word(2)? != 1 {
-        return None;
-    }
-    let count = word(4)?;
+    let images = images(ico)?;
     // A resource file starts with an empty entry.
     let mut out = resource(0, 0, 0, &[]);
     let mut group = Vec::new();
-    for value in [0, 1, count] {
+    for value in [0, 1, images.len() as u16] {
         group.extend(value.to_le_bytes());
     }
-    for index in 0..count {
-        let entry = 6 + 16 * usize::from(index);
-        let size = dword(entry + 8)? as usize;
-        let offset = dword(entry + 12)? as usize;
-        let image = ico.get(offset..offset + size)?;
-        let id = index + 1;
+    for (id, (entry, image)) in (1..).zip(&images) {
         out.extend(resource(RT_ICON, id, ICON_FLAGS, image));
         // The group entry is the file's entry with the offset replaced by the id.
-        group.extend(ico.get(entry..entry + 12)?);
+        group.extend(*entry);
         group.extend(id.to_le_bytes());
     }
     out.extend(resource(RT_GROUP_ICON, ICON_ID, GROUP_FLAGS, &group));
     Some(out)
+}
+
+/// Each image of an `.ico` file: the first 12 bytes of its directory entry
+/// (size, colors, planes, bits, byte count) and its data.
+fn images(ico: &[u8]) -> Option<Vec<(&[u8], &[u8])>> {
+    let header = ico.get(..6)?;
+    if (word(header, 0), word(header, 2)) != (0, 1) {
+        return None;
+    }
+    (0..usize::from(word(header, 4)))
+        .map(|index| {
+            let entry = ico.get(6 + 16 * index..)?.get(..16)?;
+            let (size, offset) = (dword(entry, 8), dword(entry, 12));
+            Some((&entry[..12], ico.get(offset..)?.get(..size)?))
+        })
+        .collect()
+}
+
+/// Little-endian numbers in a slice already known to be long enough.
+fn word(bytes: &[u8], at: usize) -> u16 {
+    u16::from_le_bytes([bytes[at], bytes[at + 1]])
+}
+
+fn dword(bytes: &[u8], at: usize) -> usize {
+    u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]) as usize
 }
 
 /// One resource: a header naming its type and id by number, then the data,
