@@ -167,8 +167,9 @@ run `Test freeze.cmd` and confirm the car stops and the cursor is free.
 Every push to `main` or `develop`, and every pull request into them, runs
 [CI](.github/workflows/ci.yml): on
 Linux, formatting, clippy and the logic tests; on Windows, clippy, every test and a
-release build, whose executables are attached to the run as an artifact. A pull request
-needs both to pass. [Mutation testing](.github/workflows/mutants.yml) runs weekly and can
+release build in three parallel jobs, the build's executables attached to the run as an
+artifact. A pull request needs the `Linux` and `Windows` checks to pass; `Windows`
+passes only when all three Windows jobs did. [Mutation testing](.github/workflows/mutants.yml) runs weekly and can
 be started by hand from the Actions tab.
 
 ## Releasing
