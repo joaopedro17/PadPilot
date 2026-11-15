@@ -1,0 +1,14 @@
+[package]
+name = "padpilot"
+description = "On-screen joystick that drives racing games from a laptop trackpad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+padpilot-core.workspace = true
+padpilot-logging.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+vigem-client = "0.1"

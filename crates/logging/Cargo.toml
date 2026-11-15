@@ -1,0 +1,11 @@
+[package]
+name = "padpilot-logging"
+description = "Log file setup shared by the PadPilot app and its watchdog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tracing.workspace = true
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "chrono"] }
