@@ -1,7 +1,7 @@
 //! Command line of the main app.
 //!
-//! Until the overlay exists, PadPilot runs as small diagnostic commands, one
-//! per build step. They stay useful afterwards for checking a new machine.
+//! Without arguments PadPilot shows the on-screen joystick. The other
+//! commands test one piece at a time, for checking a new machine.
 
 use std::ops::ControlFlow;
 use std::process::ExitCode;
@@ -13,15 +13,17 @@ use tracing::{Level, debug, error, info, trace};
 
 use crate::controller::{self, VirtualController};
 use crate::error::Error;
-use crate::touchpad;
+use crate::{overlay, touchpad};
 
 const USAGE: &str = "\
 Usage:
+  padpilot [overlay [seconds]]  show the on-screen joystick; joystick mode
+                                switches itself off after the seconds (default 60)
   padpilot throttle [seconds]   plug in the virtual controller and hold 50% throttle
   padpilot touchpad [seconds]   log finger touch-down, movement and lift
   padpilot drive [seconds]      drive the virtual controller from the touchpad
 
-Seconds default to 30.";
+Seconds default to 30 for the test commands.";
 
 const DEFAULT_SECONDS: u64 = 30;
 
@@ -30,17 +32,22 @@ enum Command {
     Throttle(Duration),
     Touchpad(Duration),
     Drive(Duration),
+    Overlay { joystick_limit: Duration },
 }
 
 impl Command {
     fn parse(mut args: impl Iterator<Item = String>) -> Option<Self> {
-        let name = args.next()?;
+        let name = args.next().unwrap_or_else(|| "overlay".to_owned());
         let seconds = match args.next() {
-            Some(seconds) => seconds.parse().ok()?,
-            None => DEFAULT_SECONDS,
+            Some(seconds) => Some(seconds.parse().ok()?),
+            None => None,
         };
-        let duration = Duration::from_secs(seconds);
+        let duration = Duration::from_secs(seconds.unwrap_or(DEFAULT_SECONDS));
         match name.as_str() {
+            "overlay" => Some(Self::Overlay {
+                joystick_limit: seconds
+                    .map_or(overlay::DEFAULT_JOYSTICK_LIMIT, Duration::from_secs),
+            }),
             "throttle" => Some(Self::Throttle(duration)),
             "touchpad" => Some(Self::Touchpad(duration)),
             "drive" => Some(Self::Drive(duration)),
@@ -51,7 +58,7 @@ impl Command {
     /// Per-event touchpad data is only logged at trace.
     fn log_level(self) -> Level {
         match self {
-            Self::Throttle(_) | Self::Drive(_) => Level::INFO,
+            Self::Throttle(_) | Self::Drive(_) | Self::Overlay { .. } => Level::INFO,
             Self::Touchpad(_) => Level::TRACE,
         }
     }
@@ -61,6 +68,7 @@ impl Command {
             Self::Throttle(hold) => hold_half_throttle(hold),
             Self::Touchpad(duration) => log_touches(duration),
             Self::Drive(duration) => drive(duration),
+            Self::Overlay { joystick_limit } => overlay::run(joystick_limit),
         }
     }
 }

@@ -31,34 +31,19 @@ pub fn listen(
     duration: Option<Duration>,
     mut on_contact: impl FnMut(Contact) -> ControlFlow<()>,
 ) -> Result<(), Error> {
-    if log_touchpads() == 0 {
-        warn!(target: "reader", "no Precision Touchpad found");
-        println!("No Precision Touchpad found.");
-    }
     let window = Window::create()?;
-    let registration = RAWINPUTDEVICE {
-        usUsagePage: PAGE_DIGITIZER,
-        usUsage: USAGE_TOUCHPAD,
-        // Deliver reports while another window has focus.
-        dwFlags: RIDEV_INPUTSINK,
-        hwndTarget: window.0,
-    };
-    // SAFETY: plain calls on a window this thread owns.
-    unsafe {
-        RegisterRawInputDevices(&[registration], size_of::<RAWINPUTDEVICE>() as u32)
-            .map_err(|err| Error::caused("cannot register for touchpad input", err))?;
-        if let Some(duration) = duration {
+    let mut reader = Reader::attach(window.0)?;
+    if let Some(duration) = duration {
+        // SAFETY: a plain call on a window this thread owns.
+        unsafe {
             SetTimer(
                 Some(window.0),
                 STOP_TIMER,
                 duration.as_millis() as u32,
                 None,
-            );
-        }
+            )
+        };
     }
-    info!(target: "reader", "listening for touchpad input");
-
-    let mut reader = Reader::default();
     let mut message = MSG::default();
     // SAFETY: a standard message loop; `message` is valid for every call.
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
@@ -120,8 +105,9 @@ struct Device {
     first: FirstContact,
 }
 
+/// Decodes the touchpad reports a window receives as `WM_INPUT`.
 #[derive(Default)]
-struct Reader {
+pub struct Reader {
     /// Known devices by handle. `None`: its reports cannot be decoded.
     devices: HashMap<usize, Option<Device>>,
     /// Reused for every event, so the input path does not allocate.
@@ -130,7 +116,29 @@ struct Reader {
 }
 
 impl Reader {
-    fn input(
+    /// Has `window` receive touchpad reports, also while another window has
+    /// focus. The window must then pass every `WM_INPUT` to [`Self::input`].
+    pub fn attach(window: HWND) -> Result<Self, Error> {
+        if log_touchpads() == 0 {
+            warn!(target: "reader", "no Precision Touchpad found");
+            println!("No Precision Touchpad found.");
+        }
+        let registration = RAWINPUTDEVICE {
+            usUsagePage: PAGE_DIGITIZER,
+            usUsage: USAGE_TOUCHPAD,
+            // Deliver reports while another window has focus.
+            dwFlags: RIDEV_INPUTSINK,
+            hwndTarget: window,
+        };
+        // SAFETY: a plain call; the registration lasts as long as the window.
+        unsafe { RegisterRawInputDevices(&[registration], size_of::<RAWINPUTDEVICE>() as u32) }
+            .map_err(|err| Error::caused("cannot register for touchpad input", err))?;
+        info!(target: "reader", "listening for touchpad input");
+        Ok(Self::default())
+    }
+
+    /// Handles one `WM_INPUT`, calling `on_contact` for the first finger.
+    pub fn input(
         &mut self,
         input: HRAWINPUT,
         on_contact: &mut impl FnMut(Contact) -> ControlFlow<()>,

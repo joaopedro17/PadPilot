@@ -351,3 +351,43 @@ fn title_bar_shows_an_icon_on_every_button() {
         assert!(drawn > 20, "{button:?} has {drawn} icon pixels");
     }
 }
+
+// ---- layout, exact edges ----
+
+#[test]
+fn scale_is_reported_and_applies_to_the_base_margin() {
+    assert_eq!(Layout::new(240.0, 1.5).scale(), 1.5);
+    assert_eq!(Layout::new(240.0, 0.0).scale(), 1.0);
+    assert_eq!(Layout::new(240.0, 2.0).base_radius(), 236.0);
+}
+
+#[test]
+fn the_circle_edge_is_measured_from_pixel_centers_on_every_side() {
+    let layout = Layout::new(240.0, 1.0);
+    for (x, y) in [(2, 152), (237, 152), (120, 34), (120, 269)] {
+        assert_eq!(layout.region_at(x, y), Region::Joystick, "({x}, {y})");
+    }
+    for (x, y) in [(1, 152), (238, 152), (120, 33), (120, 270)] {
+        assert_eq!(layout.region_at(x, y), Region::Outside, "({x}, {y})");
+    }
+}
+
+#[test]
+fn the_title_bar_ends_exactly_at_its_height() {
+    let layout = Layout::new(240.0, 1.0);
+    assert_eq!(layout.region_at(5, 31), Region::DragArea);
+    assert_eq!(layout.region_at(5, 32), Region::Outside);
+}
+
+#[test]
+fn cursor_cage_keeps_a_pixel_to_spare_inside_the_circle() {
+    for (side, scale) in [(200.0, 1.0), (240.0, 1.0), (333.0, 1.25), (500.0, 2.0)] {
+        let layout = Layout::new(side, scale);
+        let cage = layout.cursor_cage();
+        assert_eq!(
+            layout.region_at(cage.left - 1, cage.top - 1),
+            Region::Joystick
+        );
+        assert_eq!(layout.region_at(cage.right, cage.bottom), Region::Joystick);
+    }
+}

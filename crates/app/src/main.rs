@@ -7,6 +7,8 @@ mod controller;
 #[cfg(windows)]
 mod error;
 #[cfg(windows)]
+mod overlay;
+#[cfg(windows)]
 mod touchpad;
 
 use std::process::ExitCode;
