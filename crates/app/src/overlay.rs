@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use padpilot_core::gamepad::GamepadState;
 use padpilot_core::overlay::layout::{DEFAULT_JOYSTICK_SIDE, Layout};
 use padpilot_core::overlay::model::{Command, HitKind, Mode, Overlay};
-use padpilot_core::overlay::paint::paint;
+use padpilot_core::overlay::paint::Painter;
 use padpilot_core::stick::{Contact, StickSettings};
 use tracing::{debug, error, info, trace, warn};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -89,6 +89,7 @@ pub fn run(
         model: Overlay::new(settings),
         layout,
         surface: Surface::new(layout.width(), layout.height())?,
+        painter: Painter::new(layout),
         pad: Box::new(pad),
         reader: touchpad::Reader::attach(window)?,
         failsafe: Failsafe::start(joystick_limit),
@@ -140,6 +141,7 @@ struct State {
     model: Overlay,
     layout: Layout,
     surface: Surface,
+    painter: Painter,
     pad: Box<dyn VirtualController>,
     reader: touchpad::Reader,
     failsafe: Failsafe,
@@ -289,6 +291,7 @@ impl State {
                 info!(target: "overlay", scale, "display scaling changed");
                 self.layout = layout;
                 self.surface = surface;
+                self.painter = Painter::new(layout);
                 self.repaint();
             }
             Err(err) => error!(target: "overlay", "{err}"),
@@ -300,7 +303,7 @@ impl State {
         let started = Instant::now();
         self.stale_since = None;
         let (mode, knob) = (self.model.mode(), self.model.knob());
-        paint(&mut self.surface.canvas(), &self.layout, mode, knob);
+        self.painter.paint(&mut self.surface.canvas(), mode, knob);
         let painted = Instant::now();
         if let Err(err) = self.surface.present(self.window, OPACITY) {
             debug!(target: "overlay", "{err}");

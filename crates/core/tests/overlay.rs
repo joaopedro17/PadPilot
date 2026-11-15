@@ -1,7 +1,7 @@
 use padpilot_core::gamepad::GamepadState;
 use padpilot_core::overlay::layout::{Button, Layout, Rect, Region};
 use padpilot_core::overlay::model::{Command, HitKind, Mode, Overlay};
-use padpilot_core::overlay::paint::{Canvas, paint};
+use padpilot_core::overlay::paint::{Canvas, Painter, paint};
 use padpilot_core::stick::{Contact, Deflection, LiftBehavior, Point, StickSettings};
 
 // ---- layout ----
@@ -349,6 +349,48 @@ fn title_bar_shows_an_icon_on_every_button() {
             .filter(|&(x, y)| image.at(x, y) != background)
             .count();
         assert!(drawn > 20, "{button:?} has {drawn} icon pixels");
+    }
+}
+
+#[test]
+fn the_reused_painter_draws_exactly_what_a_fresh_paint_draws() {
+    let frames = [
+        (Mode::Normal, Deflection::NEUTRAL),
+        (Mode::Joystick, Deflection::NEUTRAL),
+        (Mode::Joystick, Deflection::new(1.0, 0.0)),
+        (Mode::Joystick, Deflection::new(-0.7, -0.7)),
+        (Mode::Joystick, Deflection::new(0.0, 1.0)),
+        (Mode::Normal, Deflection::new(0.2, -1.0)),
+        (Mode::Joystick, Deflection::new(-1.0, 0.0)),
+    ];
+    for scale in [1.0, 1.25, 2.0] {
+        let layout = Layout::new(240.0, scale);
+        let (width, height) = (layout.width() as usize, layout.height() as usize);
+        let mut painter = Painter::new(layout);
+        let mut reused = vec![0xDEADBEEF; width * height];
+        for (mode, knob) in frames {
+            let mut fresh = vec![0xDEADBEEF; width * height];
+            paint(
+                &mut Canvas {
+                    width,
+                    height,
+                    pixels: &mut fresh,
+                },
+                &layout,
+                mode,
+                knob,
+            );
+            painter.paint(
+                &mut Canvas {
+                    width,
+                    height,
+                    pixels: &mut reused,
+                },
+                mode,
+                knob,
+            );
+            assert!(reused == fresh, "scale {scale}, {mode:?}, {knob:?}");
+        }
     }
 }
 
