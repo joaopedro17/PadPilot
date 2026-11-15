@@ -1,0 +1,5 @@
+[package]
+name = "padpilot-core"
+description = "Platform-independent logic for PadPilot: stick behavior and controller mapping"
+version.workspace = true
+edition.workspace = true

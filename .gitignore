@@ -1,0 +1,4 @@
+# Requirements and generated documents stay local
+/docs/
+/target/
+*:Zone.Identifier
