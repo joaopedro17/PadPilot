@@ -53,7 +53,7 @@ use windows::core::w;
 
 use crate::controller::{self, VirtualController};
 use crate::error::Error;
-use crate::{touchpad, window_state};
+use crate::{config, touchpad, window_state};
 use failsafe::Failsafe;
 use focus::FocusHook;
 use surface::Surface;
@@ -139,6 +139,8 @@ pub fn run(options: Options, settings: StickSettings) -> Result<(), Error> {
         position: saved.position,
         resizing: None,
         unsaved_since: None,
+        config: config::Watch::new(),
+        settings_window: None,
     };
     if options.telemetry {
         let telemetry = Telemetry::start(window)?;
@@ -229,6 +231,9 @@ struct State {
     /// When the window was last moved, resized or made more see-through, if
     /// that is not saved yet.
     unsaved_since: Option<Instant>,
+    config: config::Watch,
+    /// The settings window, while it is open.
+    settings_window: Option<std::process::Child>,
 }
 
 impl State {
@@ -252,6 +257,10 @@ impl State {
             return None;
         }
         let command = self.model.left_click(self.layout.region_at(x, y));
+        if command == Some(Command::Settings) {
+            self.open_settings();
+            return None;
+        }
         if command == Some(Command::Opacity) {
             self.opacity = self.opacity.next();
             info!(target: "overlay", opacity = self.opacity.value(), "opacity changed");
@@ -260,6 +269,26 @@ impl State {
             return None;
         }
         command
+    }
+
+    /// Opens the settings window, unless it is open already.
+    fn open_settings(&mut self) {
+        if let Some(child) = &mut self.settings_window
+            && matches!(child.try_wait(), Ok(None))
+        {
+            info!(target: "overlay", "settings window already open");
+            return;
+        }
+        let started = std::env::current_exe()
+            .map(|exe| exe.with_file_name("padpilot-settings.exe"))
+            .and_then(|exe| std::process::Command::new(exe).spawn());
+        match started {
+            Ok(child) => {
+                info!(target: "overlay", pid = child.id(), "settings window opened");
+                self.settings_window = Some(child);
+            }
+            Err(err) => error!(target: "overlay", "cannot open the settings window: {err}"),
+        }
     }
 
     /// Pressing the handle starts resizing; the resize timer takes over.
@@ -364,6 +393,9 @@ impl State {
     /// Runs on the heartbeat timer.
     fn tick(&mut self) {
         self.heartbeat();
+        if let Some(config) = self.config.changed() {
+            self.model.set_settings(config.stick);
+        }
         if self.resizing.is_none()
             && self
                 .unsaved_since
@@ -630,7 +662,7 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<
             // Minimizing and closing send messages back to this window, so
             // they run after the state is released.
             match with_state(|state| state.left_click(x, y))?? {
-                Command::Opacity => {}
+                Command::Opacity | Command::Settings => {}
                 Command::Minimize => {
                     info!(target: "overlay", "minimized");
                     // SAFETY: a plain call on this thread's window.

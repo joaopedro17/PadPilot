@@ -2,6 +2,7 @@
 //! a misspelled or impossible one is an error, so it is never silently ignored.
 
 use serde::Deserialize;
+use toml_edit::{DocumentMut, Item, Table, value};
 
 use crate::stick::{
     DEFAULT_DEAD_ZONE, DEFAULT_FULL_TRAVEL, LiftBehavior, SettingsError, StickSettings,
@@ -58,6 +59,49 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 impl Config {
+    /// `text` with these settings written into it, keeping its comments and
+    /// anything else in it. A file that cannot hold them is replaced by the
+    /// explained template.
+    pub fn write_into(&self, text: &str) -> String {
+        let written = text
+            .parse::<DocumentMut>()
+            .map(|document| self.written(document))
+            .ok()
+            .filter(|written| Config::parse(written).is_ok_and(|read| read == *self));
+        written.unwrap_or_else(|| {
+            let template = TEMPLATE.parse().unwrap_or_default();
+            self.written(template)
+        })
+    }
+
+    fn written(&self, mut document: DocumentMut) -> String {
+        // Rounded, so the file shows 0.05 rather than 0.0500000007.
+        let rounded = |number: f32, places: i32| {
+            let factor = 10f64.powi(places);
+            (f64::from(number) * factor).round() / factor
+        };
+        for section in ["stick", "log"] {
+            if !document.contains_table(section) {
+                document.insert(section, Item::Table(Table::new()));
+            }
+        }
+        let stick = &self.stick;
+        document["stick"]["full_travel_mm"] = value(rounded(stick.full_travel(), 1));
+        document["stick"]["dead_zone"] = value(rounded(stick.dead_zone(), 2));
+        document["stick"]["lift_behavior"] = value(match stick.lift_behavior() {
+            LiftBehavior::ReturnToCenter => "return_to_center",
+            LiftBehavior::HoldPosition => "hold_position",
+        });
+        document["log"]["level"] = value(match self.log_level {
+            LogLevel::Error => "error",
+            LogLevel::Warn => "warn",
+            LogLevel::Info => "info",
+            LogLevel::Debug => "debug",
+            LogLevel::Trace => "trace",
+        });
+        document.to_string()
+    }
+
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let file: File = toml::from_str(text).map_err(|err| ConfigError(err.to_string()))?;
         let lift_behavior = match file.stick.lift_behavior {

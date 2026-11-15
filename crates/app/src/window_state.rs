@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use padpilot_core::window_state::WindowState;
 use tracing::{info, warn};
 
-use crate::config::settings_dir;
+use padpilot_logging::settings_dir;
 
 fn path() -> PathBuf {
     settings_dir().join("window.toml")

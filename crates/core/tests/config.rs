@@ -84,3 +84,45 @@ fn the_log_level_is_read_and_defaults_to_info() {
     }
     assert!(Config::parse("[log]\nlevel = \"loud\"\n").is_err());
 }
+
+fn changed() -> Config {
+    Config {
+        stick: StickSettings::new(LiftBehavior::HoldPosition, 7.5, 0.12).unwrap(),
+        log_level: LogLevel::Debug,
+    }
+}
+
+#[test]
+fn written_settings_read_back_the_same() {
+    let text = changed().write_into(TEMPLATE);
+    assert_eq!(Config::parse(&text).unwrap(), changed());
+}
+
+#[test]
+fn writing_keeps_the_explanations_in_the_file() {
+    let text = changed().write_into(TEMPLATE);
+    assert!(
+        text.contains("# Sensitivity: how far your finger moves"),
+        "{text}"
+    );
+    assert!(
+        text.contains("# What happens when you lift your finger"),
+        "{text}"
+    );
+    assert!(text.contains("dead_zone = 0.12\n"), "{text}");
+    assert!(text.contains("full_travel_mm = 7.5\n"), "{text}");
+}
+
+#[test]
+fn writing_into_a_short_file_adds_what_is_missing() {
+    let text = changed().write_into("# my notes\n[stick]\nfull_travel_mm = 9\n");
+    assert!(text.starts_with("# my notes\n"), "{text}");
+    assert_eq!(Config::parse(&text).unwrap(), changed());
+}
+
+#[test]
+fn writing_into_a_broken_file_starts_from_the_explained_template() {
+    let text = changed().write_into("this is [ not toml");
+    assert!(text.contains("# Sensitivity"), "{text}");
+    assert_eq!(Config::parse(&text).unwrap(), changed());
+}

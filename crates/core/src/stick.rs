@@ -99,6 +99,18 @@ impl StickSettings {
             dead_zone,
         })
     }
+
+    pub fn lift_behavior(&self) -> LiftBehavior {
+        self.lift_behavior
+    }
+
+    pub fn full_travel(&self) -> f32 {
+        self.full_travel
+    }
+
+    pub fn dead_zone(&self) -> f32 {
+        self.dead_zone
+    }
 }
 
 /// Finger travel for full deflection, in mm, unless the user sets another.
@@ -154,6 +166,11 @@ impl Stick {
                 }
             }
         }
+    }
+
+    /// Takes effect from the next movement; the stick stays where it is.
+    pub fn set_settings(&mut self, settings: StickSettings) {
+        self.settings = settings;
     }
 
     /// Centers the stick. A finger still on the pad starts over from center.

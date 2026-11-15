@@ -7,19 +7,12 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
 
 use padpilot_core::config::{Config, LogLevel, TEMPLATE};
-use tracing::{Level, error, info};
+use tracing::{Level, error, info, warn};
 use windows::Win32::UI::WindowsAndMessaging::{MB_ICONWARNING, MB_OK, MessageBoxW};
 use windows::core::HSTRING;
-
-/// `%APPDATA%\PadPilot`: the user's settings and the saved window state.
-pub fn settings_dir() -> PathBuf {
-    std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("PadPilot")
-}
 
 pub struct Loaded {
     pub config: Config,
@@ -34,7 +27,7 @@ enum Outcome {
 }
 
 pub fn read() -> Loaded {
-    let path = settings_dir().join("config.toml");
+    let path = padpilot_logging::config_path();
     let (config, outcome) = match std::fs::read_to_string(&path) {
         Ok(text) => match Config::parse(&text) {
             Ok(config) => (config, Outcome::Read),
@@ -110,4 +103,55 @@ fn warn_user(text: &str) {
             MB_OK | MB_ICONWARNING,
         );
     }
+}
+
+/// Notices when `config.toml` changes, from the settings window or by hand.
+pub struct Watch {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+    checked: Instant,
+}
+
+impl Watch {
+    const EVERY: Duration = Duration::from_millis(500);
+
+    pub fn new() -> Self {
+        let path = padpilot_logging::config_path();
+        Self {
+            modified: modified(&path),
+            path,
+            checked: Instant::now(),
+        }
+    }
+
+    /// The new settings when the file changed since the last call. A file
+    /// with a mistake is logged and ignored; the current settings stay.
+    pub fn changed(&mut self) -> Option<Config> {
+        if self.checked.elapsed() < Self::EVERY {
+            return None;
+        }
+        self.checked = Instant::now();
+        let now = modified(&self.path);
+        if now == self.modified {
+            return None;
+        }
+        self.modified = now;
+        let text = std::fs::read_to_string(&self.path).ok()?;
+        match Config::parse(&text) {
+            Ok(config) => {
+                info!(target: "config", ?config, "config changed, now in use");
+                Some(config)
+            }
+            Err(err) => {
+                warn!(target: "config", problem = %err, "config changed but has a mistake; keeping the current settings");
+                None
+            }
+        }
+    }
+}
+
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
 }

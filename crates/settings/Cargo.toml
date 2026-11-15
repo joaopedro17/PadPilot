@@ -1,0 +1,12 @@
+[package]
+name = "padpilot-settings"
+description = "Settings window for PadPilot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+eframe = "0.37.0"
+padpilot-core.workspace = true
+padpilot-logging.workspace = true
+tracing.workspace = true

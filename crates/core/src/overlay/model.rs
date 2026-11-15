@@ -26,6 +26,8 @@ pub enum HitKind {
 pub enum Command {
     /// Step the window's opacity down, wrapping to full.
     Opacity,
+    /// Open the settings window.
+    Settings,
     Minimize,
     Close,
 }
@@ -75,6 +77,11 @@ impl Overlay {
         Some(self.mode)
     }
 
+    /// New settings, from the next finger movement on.
+    pub fn set_settings(&mut self, settings: StickSettings) {
+        self.stick.set_settings(settings);
+    }
+
     /// Leaves joystick mode whatever the reason. Returns whether it was on.
     pub fn leave_joystick_mode(&mut self) -> bool {
         let was_on = self.mode == Mode::Joystick;
@@ -96,6 +103,7 @@ impl Overlay {
     pub fn left_click(&self, region: Region) -> Option<Command> {
         match (self.mode, region) {
             (Mode::Normal, Region::Button(Button::Opacity)) => Some(Command::Opacity),
+            (Mode::Normal, Region::Button(Button::Settings)) => Some(Command::Settings),
             (Mode::Normal, Region::Button(Button::Minimize)) => Some(Command::Minimize),
             (Mode::Normal, Region::Button(Button::Close)) => Some(Command::Close),
             _ => None,

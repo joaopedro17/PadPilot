@@ -175,3 +175,23 @@ fn default_settings_spring_back_sharply_with_a_small_dead_zone() {
     let expected = StickSettings::new(LiftBehavior::ReturnToCenter, 10.0, 0.05).unwrap();
     assert_eq!(StickSettings::default(), expected);
 }
+
+#[test]
+fn new_settings_apply_from_the_next_movement_without_a_jump() {
+    let mut s = spring();
+    touch(&mut s, 0.0, 0.0);
+    touch(&mut s, 10.0, 0.0);
+    assert_at(&s, 0.5, 0.0);
+    s.set_settings(StickSettings::new(LiftBehavior::ReturnToCenter, 10.0, 0.0).unwrap());
+    assert_at(&s, 0.5, 0.0);
+    touch(&mut s, 12.0, 0.0);
+    assert_at(&s, 0.7, 0.0);
+}
+
+#[test]
+fn settings_report_what_they_were_made_with() {
+    let settings = StickSettings::new(LiftBehavior::HoldPosition, 12.5, 0.1).unwrap();
+    assert_eq!(settings.lift_behavior(), LiftBehavior::HoldPosition);
+    assert_eq!(settings.full_travel(), 12.5);
+    assert_eq!(settings.dead_zone(), 0.1);
+}

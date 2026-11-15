@@ -1,4 +1,4 @@
-//! Log file setup shared by the main app and the watchdog.
+//! Where PadPilot keeps its files, and the log setup shared by its programs.
 //!
 //! Lines look like `2026-11-15 12:00:00.123  INFO controller: connected`.
 //! The component name is the event's `target`.
@@ -24,6 +24,19 @@ pub fn logs_dir() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
         .join("PadPilot")
         .join("logs")
+}
+
+/// `%APPDATA%\PadPilot`: the user's settings and the saved window state.
+pub fn settings_dir() -> PathBuf {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("PadPilot")
+}
+
+/// The user's settings file.
+pub fn config_path() -> PathBuf {
+    settings_dir().join("config.toml")
 }
 
 /// Starts logging to `<dir>/<component>.<date>.log` through a background

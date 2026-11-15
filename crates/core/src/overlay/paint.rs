@@ -20,8 +20,6 @@ const BAR_ALPHA: f32 = 0.94;
 const BAR_FADE: f32 = 0.35;
 const ICON: Rgb = [0.93, 0.93, 0.95];
 const ICON_ALPHA: f32 = 0.92;
-/// Buttons that do nothing yet are drawn faint.
-const INERT_ICON_ALPHA: f32 = 0.35;
 
 const RING: Rgb = [0.26, 0.26, 0.29];
 const RING_ACTIVE: Rgb = [0.16, 0.55, 1.0];
@@ -257,11 +255,10 @@ impl Scene {
                 continue;
             }
             let icon = icon_distance(button, (x - center_x) / unit, (y - center_y) / unit);
-            let alpha = match button {
-                Button::Opacity | Button::Minimize | Button::Close => ICON_ALPHA,
-                Button::Settings => INERT_ICON_ALPHA,
-            };
-            pixel.cover(ICON, alpha * coverage(icon * unit) * bar * self.bar_fade);
+            pixel.cover(
+                ICON,
+                ICON_ALPHA * coverage(icon * unit) * bar * self.bar_fade,
+            );
         }
         pixel
     }

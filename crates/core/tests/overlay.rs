@@ -263,6 +263,17 @@ fn joystick_mode_cannot_drag_the_window() {
 }
 
 #[test]
+fn new_settings_reach_the_stick_while_driving() {
+    let mut o = overlay();
+    o.right_click(Region::Joystick);
+    touch(&mut o, 0.0, 0.0);
+    touch(&mut o, 10.0, 0.0);
+    o.set_settings(StickSettings::new(LiftBehavior::HoldPosition, 10.0, 0.0).unwrap());
+    let state = touch(&mut o, 12.0, 0.0).unwrap();
+    assert_eq!(state.left_stick_x, (0.7f32 * 32767.0).round() as i16);
+}
+
+#[test]
 fn the_resize_handle_works_only_in_normal_mode() {
     let mut o = overlay();
     assert_eq!(o.hit(Region::ResizeHandle), HitKind::Client);
@@ -281,6 +292,10 @@ fn normal_mode_buttons_change_opacity_minimize_and_close() {
     assert_eq!(
         o.left_click(Region::Button(Button::Opacity)),
         Some(Command::Opacity)
+    );
+    assert_eq!(
+        o.left_click(Region::Button(Button::Settings)),
+        Some(Command::Settings)
     );
     assert_eq!(
         o.left_click(Region::Button(Button::Minimize)),
