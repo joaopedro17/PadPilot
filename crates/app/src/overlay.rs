@@ -6,17 +6,18 @@
 
 mod failsafe;
 mod surface;
+mod telemetry;
 
 use std::cell::RefCell;
 use std::mem::size_of;
 use std::ops::ControlFlow;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use padpilot_core::gamepad::GamepadState;
 use padpilot_core::overlay::layout::{DEFAULT_JOYSTICK_SIDE, Layout};
 use padpilot_core::overlay::model::{Command, HitKind, Mode, Overlay};
 use padpilot_core::overlay::paint::paint;
-use padpilot_core::stick::StickSettings;
+use padpilot_core::stick::{Contact, StickSettings};
 use tracing::{debug, error, info, trace, warn};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -42,6 +43,7 @@ use crate::error::Error;
 use crate::touchpad;
 use failsafe::Failsafe;
 use surface::Surface;
+use telemetry::{Telemetry, Timing};
 
 /// How long joystick mode may last before it switches itself off. A stopgap
 /// until the watchdog process exists.
@@ -56,13 +58,22 @@ const CAGE_EVERY_MS: u32 = 100;
 const SCREEN_MARGIN: f32 = 24.0;
 const OPACITY: u8 = 255;
 
+/// Painting takes several milliseconds, longer than the gap between touchpad
+/// events, so the knob is redrawn only when no input is waiting. While input
+/// keeps coming, it is still redrawn at least this often.
+const MAX_REPAINT_GAP: Duration = Duration::from_millis(33);
+
 thread_local! {
     /// Everything the window procedure needs. Only touched on the window's
     /// thread, and never held across a call that sends window messages.
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
 }
 
-pub fn run(joystick_limit: Duration, settings: StickSettings) -> Result<(), Error> {
+pub fn run(
+    joystick_limit: Duration,
+    settings: StickSettings,
+    record_telemetry: bool,
+) -> Result<(), Error> {
     // SAFETY: a process-wide setting, made before any window exists. It
     // fails harmlessly when the setting was already made.
     let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
@@ -81,7 +92,15 @@ pub fn run(joystick_limit: Duration, settings: StickSettings) -> Result<(), Erro
         pad: Box::new(pad),
         reader: touchpad::Reader::attach(window)?,
         failsafe: Failsafe::start(joystick_limit),
+        telemetry: None,
+        stale_since: None,
     };
+    if record_telemetry {
+        let telemetry = Telemetry::start(window)?;
+        info!(target: "telemetry", path = %telemetry.path().display(), "recording");
+        println!("Recording telemetry to {}", telemetry.path().display());
+        state.telemetry = Some(telemetry);
+    }
     info!(
         target: "overlay",
         scale,
@@ -103,8 +122,15 @@ pub fn run(joystick_limit: Duration, settings: StickSettings) -> Result<(), Erro
     }
 
     failsafe::release_cursor();
-    // Dropping the state unplugs the virtual controller.
-    drop(STATE.take());
+    // Dropping the state unplugs the virtual controller and saves telemetry.
+    if let Some(telemetry) = STATE.take().and_then(|state| state.telemetry) {
+        info!(target: "telemetry", rows = telemetry.rows(), path = %telemetry.path().display(), "saved");
+        println!(
+            "Telemetry saved: {} events in {}",
+            telemetry.rows(),
+            telemetry.path().display()
+        );
+    }
     info!(target: "overlay", "window closed");
     Ok(())
 }
@@ -117,6 +143,9 @@ struct State {
     pad: Box<dyn VirtualController>,
     reader: touchpad::Reader,
     failsafe: Failsafe,
+    telemetry: Option<Telemetry>,
+    /// When the knob on screen stopped matching the stick; `None`: it matches.
+    stale_since: Option<Instant>,
 }
 
 impl State {
@@ -194,23 +223,63 @@ impl State {
         }
     }
 
-    fn touchpad_input(&mut self, input: HRAWINPUT) {
+    /// The controller is updated at once for every event; the knob is
+    /// redrawn once the waiting input is handled.
+    fn raw_input(&mut self, input: HRAWINPUT) {
+        let mouse = self
+            .telemetry
+            .as_ref()
+            .and_then(|_| touchpad::mouse_motion(input));
+        let (contact, mut timing) = match mouse {
+            Some(_) => (None, Timing::default()),
+            None => self.touchpad_input(input),
+        };
+        if let Some(stale_since) = self.stale_since
+            && (!touchpad::input_waiting() || stale_since.elapsed() >= MAX_REPAINT_GAP)
+        {
+            let (paint, present) = self.repaint();
+            timing.paint = Some(paint);
+            timing.present = Some(present);
+        }
+        if let Some(telemetry) = &mut self.telemetry {
+            let (mode, knob) = (self.model.mode(), self.model.knob());
+            match mouse {
+                Some(motion) => telemetry.mouse(motion, mode, knob, &timing),
+                None => telemetry.touch(contact, mode, knob, &timing),
+            }
+        }
+    }
+
+    /// Returns the last finger contact in the event and how long each stage took.
+    fn touchpad_input(&mut self, input: HRAWINPUT) -> (Option<Contact>, Timing) {
+        let started = Instant::now();
         let mut latest = None;
+        let mut last_contact = None;
         let model = &mut self.model;
         let _ = self.reader.input(input, &mut |contact| {
+            last_contact = Some(contact);
             if let Some(state) = model.contact(contact) {
                 trace!(target: "stick", ?contact, ?state, "update");
                 latest = Some(state);
             }
             ControlFlow::Continue(())
         });
-        let Some(state) = latest else { return };
+        let mut timing = Timing {
+            read: started.elapsed(),
+            ..Timing::default()
+        };
+        let Some(state) = latest else {
+            return (last_contact, timing);
+        };
+        let sending = Instant::now();
         if let Err(err) = self.pad.send(state) {
             error!(target: "controller", "{err}");
             self.leave_joystick_mode("the virtual controller failed");
-            return;
+            return (last_contact, timing);
         }
-        self.repaint();
+        timing.send = Some(sending.elapsed());
+        self.stale_since.get_or_insert_with(Instant::now);
+        (last_contact, timing)
     }
 
     fn rescale(&mut self, scale: f32) {
@@ -226,12 +295,17 @@ impl State {
         }
     }
 
-    fn repaint(&mut self) {
+    /// Returns how long painting and showing took.
+    fn repaint(&mut self) -> (Duration, Duration) {
+        let started = Instant::now();
+        self.stale_since = None;
         let (mode, knob) = (self.model.mode(), self.model.knob());
         paint(&mut self.surface.canvas(), &self.layout, mode, knob);
+        let painted = Instant::now();
         if let Err(err) = self.surface.present(self.window, OPACITY) {
             debug!(target: "overlay", "{err}");
         }
+        (painted - started, painted.elapsed())
     }
 }
 
@@ -284,7 +358,7 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<
             Some(0)
         }
         WM_INPUT => {
-            with_state(|state| state.touchpad_input(HRAWINPUT(lparam.0 as _)));
+            with_state(|state| state.raw_input(HRAWINPUT(lparam.0 as _)));
             // The default handling releases the raw input data.
             None
         }

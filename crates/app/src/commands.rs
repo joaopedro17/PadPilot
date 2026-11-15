@@ -19,6 +19,7 @@ const USAGE: &str = "\
 Usage:
   padpilot [overlay [seconds]]  show the on-screen joystick; joystick mode
                                 switches itself off after the seconds (default 60)
+  padpilot telemetry [seconds]  the same, recording input timing to a CSV file
   padpilot throttle [seconds]   plug in the virtual controller and hold 50% throttle
   padpilot touchpad [seconds]   log finger touch-down, movement and lift
   padpilot drive [seconds]      drive the virtual controller from the touchpad
@@ -32,7 +33,10 @@ enum Command {
     Throttle(Duration),
     Touchpad(Duration),
     Drive(Duration),
-    Overlay { joystick_limit: Duration },
+    Overlay {
+        joystick_limit: Duration,
+        telemetry: bool,
+    },
 }
 
 impl Command {
@@ -44,9 +48,10 @@ impl Command {
         };
         let duration = Duration::from_secs(seconds.unwrap_or(DEFAULT_SECONDS));
         match name.as_str() {
-            "overlay" => Some(Self::Overlay {
+            "overlay" | "telemetry" => Some(Self::Overlay {
                 joystick_limit: seconds
                     .map_or(overlay::DEFAULT_JOYSTICK_LIMIT, Duration::from_secs),
+                telemetry: name == "telemetry",
             }),
             "throttle" => Some(Self::Throttle(duration)),
             "touchpad" => Some(Self::Touchpad(duration)),
@@ -68,7 +73,10 @@ impl Command {
             Self::Throttle(hold) => hold_half_throttle(hold),
             Self::Touchpad(duration) => log_touches(duration),
             Self::Drive(duration) => drive(duration, settings),
-            Self::Overlay { joystick_limit } => overlay::run(joystick_limit, settings),
+            Self::Overlay {
+                joystick_limit,
+                telemetry,
+            } => overlay::run(joystick_limit, settings, telemetry),
         }
     }
 }

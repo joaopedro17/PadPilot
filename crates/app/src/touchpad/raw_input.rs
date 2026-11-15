@@ -11,12 +11,13 @@ use tracing::{info, warn};
 use windows::Win32::Foundation::{HANDLE, HWND};
 use windows::Win32::UI::Input::{
     GetRawInputData, GetRawInputDeviceInfoW, GetRawInputDeviceList, HRAWINPUT, RAWINPUT,
-    RAWINPUTDEVICE, RAWINPUTDEVICELIST, RAWINPUTHEADER, RID_DEVICE_INFO, RID_INPUT,
-    RIDEV_INPUTSINK, RIDI_DEVICEINFO, RIDI_DEVICENAME, RIM_TYPEHID, RegisterRawInputDevices,
+    RAWINPUTDEVICE, RAWINPUTDEVICELIST, RAWINPUTHEADER, RID_DEVICE_INFO, RID_HEADER, RID_INPUT,
+    RIDEV_INPUTSINK, RIDI_DEVICEINFO, RIDI_DEVICENAME, RIM_TYPEHID, RIM_TYPEMOUSE,
+    RegisterRawInputDevices,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG, SetTimer,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT, WM_TIMER,
+    CreateWindowExW, DestroyWindow, DispatchMessageW, GetMessageW, GetQueueStatus, HWND_MESSAGE,
+    MSG, QS_RAWINPUT, SetTimer, WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT, WM_TIMER,
 };
 use windows::core::w;
 
@@ -24,6 +25,8 @@ use super::hid::{Layout, PAGE_DIGITIZER, USAGE_TOUCHPAD};
 use crate::error::Error;
 
 const STOP_TIMER: usize = 1;
+const PAGE_GENERIC_DESKTOP: u16 = 0x01;
+const USAGE_MOUSE: u16 = 0x02;
 
 /// Calls `on_contact` for the first finger on the touchpad, from this thread,
 /// until it asks to stop or `duration` has passed (forever when `None`).
@@ -308,4 +311,62 @@ fn device_name(device: HANDLE) -> String {
     String::from_utf16_lossy(&name)
         .trim_end_matches('\0')
         .to_owned()
+}
+
+/// Also has `window` receive mouse movement, also while another window has
+/// focus. Only for measuring: it does not change how the mouse behaves.
+pub fn listen_to_mouse(window: HWND) -> Result<(), Error> {
+    let registration = RAWINPUTDEVICE {
+        usUsagePage: PAGE_GENERIC_DESKTOP,
+        usUsage: USAGE_MOUSE,
+        dwFlags: RIDEV_INPUTSINK,
+        hwndTarget: window,
+    };
+    // SAFETY: a plain call; the registration lasts as long as the window.
+    unsafe { RegisterRawInputDevices(&[registration], size_of::<RAWINPUTDEVICE>() as u32) }
+        .map_err(|err| Error::caused("cannot register for mouse input", err))
+}
+
+/// The movement in a mouse `WM_INPUT`; `None` for any other device.
+pub fn mouse_motion(input: HRAWINPUT) -> Option<(i32, i32)> {
+    let header_size = size_of::<RAWINPUTHEADER>() as u32;
+    let mut header = RAWINPUTHEADER::default();
+    let mut size = header_size;
+    // SAFETY: `header` holds exactly `size` bytes.
+    let read = unsafe {
+        GetRawInputData(
+            input,
+            RID_HEADER,
+            Some((&raw mut header).cast()),
+            &mut size,
+            header_size,
+        )
+    };
+    if read != header_size || header.dwType != RIM_TYPEMOUSE.0 {
+        return None;
+    }
+    let mut event = RAWINPUT::default();
+    let mut size = size_of::<RAWINPUT>() as u32;
+    // SAFETY: `event` holds `size` bytes, enough for a mouse event.
+    let read = unsafe {
+        GetRawInputData(
+            input,
+            RID_INPUT,
+            Some((&raw mut event).cast()),
+            &mut size,
+            header_size,
+        )
+    };
+    if read == u32::MAX {
+        return None;
+    }
+    // SAFETY: the header said this is a mouse event.
+    let mouse = unsafe { event.data.mouse };
+    Some((mouse.lLastX, mouse.lLastY))
+}
+
+/// True when more raw input is already waiting in this thread's queue.
+pub fn input_waiting() -> bool {
+    // SAFETY: a plain call. The high word lists what is in the queue now.
+    (unsafe { GetQueueStatus(QS_RAWINPUT) } >> 16) & QS_RAWINPUT.0 != 0
 }

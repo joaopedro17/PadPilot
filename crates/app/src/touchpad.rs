@@ -7,4 +7,4 @@
 mod hid;
 mod raw_input;
 
-pub use raw_input::{Reader, listen};
+pub use raw_input::{Reader, input_waiting, listen, listen_to_mouse, mouse_motion};
