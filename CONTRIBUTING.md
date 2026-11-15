@@ -173,20 +173,21 @@ be started by hand from the Actions tab.
 
 ## Releasing
 
-1. On `develop`, set the new version in the root `Cargo.toml` and commit it
-   (`Release 0.9.0`).
-2. Merge `develop` into `main`, and tag the merged commit with the release notes as the
-   message: the first line becomes the release title, the rest its notes.
+1. On `develop`, set the new version in the root `Cargo.toml` (through a pull request,
+   like any change), and let CI pass.
+2. Move `main` to that commit; no new commit is made:
    ```bash
    git switch main
    git merge --ff-only develop
-   git tag -a v0.9.0 -m "PadPilot 0.9.0" -m "What changed, for users."
-   git push origin main v0.9.0
+   git push origin main
    git switch develop
    ```
-3. The [release workflow](.github/workflows/release.yml) checks that the tag is on
-   `main` and matches the version, runs the tests, builds on Windows and publishes the
-   GitHub release with the zip and its SHA-256 checksum.
+3. On GitHub, **Releases → Draft a new release**: create the tag `vX.Y.Z` on `main`,
+   write the notes, and publish.
+4. The [release workflow](.github/workflows/release.yml) checks that the tag is on
+   `main` and matches the version, runs the tests, builds on Windows, and attaches
+   `PadPilot-X.Y.Z-windows-x64.zip` and its SHA-256 checksum to the release (a few
+   minutes after publishing).
 
 ## The icon
 

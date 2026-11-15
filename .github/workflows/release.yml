@@ -1,10 +1,10 @@
-# Pushing a tag like v0.8.0 builds PadPilot on Windows and publishes a GitHub
-# release with the zip, its checksum, and the tag's message as the notes.
+# Publishing a release on GitHub (tag vX.Y.Z on main, notes written there)
+# builds PadPilot on Windows and attaches the zip and its checksum to it.
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -17,21 +17,21 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      # The checkout leaves out the tag's message, which becomes the notes.
-      - run: git fetch --force origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
-      # Releases come from main; a tag on develop by mistake publishes nothing.
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      # Releases come from main; a tag on another branch gets no files.
       - name: The tagged commit is on main
         shell: pwsh
         run: |
           git fetch origin main
-          git merge-base --is-ancestor "${{ github.sha }}" origin/main
-          if ($LASTEXITCODE -ne 0) { throw "${{ github.ref_name }} is not on main" }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw "${{ github.event.release.tag_name }} is not on main" }
       - name: The version in Cargo.toml matches the tag
         shell: pwsh
         run: |
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          if ("v$version" -ne "${{ github.ref_name }}") {
-            throw "Cargo.toml says $version but the tag is ${{ github.ref_name }}"
+          if ("v$version" -ne "${{ github.event.release.tag_name }}") {
+            throw "Cargo.toml says $version but the tag is ${{ github.event.release.tag_name }}"
           }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -40,19 +40,15 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $name = "PadPilot-" + "${{ github.ref_name }}".TrimStart('v')
+          $name = "PadPilot-" + "${{ github.event.release.tag_name }}".TrimStart('v')
           New-Item -ItemType Directory "dist/$name" | Out-Null
           Copy-Item target/release/padpilot.exe, target/release/padpilot-watchdog.exe,
             target/release/padpilot-settings.exe, README.md, LICENSE-MIT, LICENSE-APACHE "dist/$name"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name-windows-x64.zip"
           $hash = (Get-FileHash "dist/$name-windows-x64.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $name-windows-x64.zip" | Out-File -Encoding ascii "dist/$name-windows-x64.zip.sha256"
-      - name: Publish
+      - name: Attach to the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          $tag = "${{ github.ref_name }}"
-          git tag -l --format='%(contents:body)' $tag | Out-File -Encoding utf8 notes.md
-          $title = git tag -l --format='%(contents:subject)' $tag
-          gh release create $tag (Get-ChildItem dist -File).FullName --title "$title" --notes-file notes.md
+        run: gh release upload "${{ github.event.release.tag_name }}" (Get-ChildItem dist -File).FullName --clobber
