@@ -6,3 +6,4 @@ pub mod gamepad;
 pub mod overlay;
 pub mod stick;
 pub mod touchpad;
+pub mod watchdog;

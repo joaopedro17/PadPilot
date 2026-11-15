@@ -1,8 +1,9 @@
-//! Makes sure the cursor is never locked for long.
+//! Joystick mode's optional time limit.
 //!
-//! Until the watchdog process exists (build step 5), joystick mode has a
-//! time limit. A separate thread enforces it, so the cursor is released even
-//! if the window's own thread is stuck.
+//! The watchdog process is the main protection against a stuck window. When
+//! it is not running, or when a limit is asked for, joystick mode ends after
+//! a while. A separate thread enforces it, so the cursor is released even if
+//! the window's own thread is stuck.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,18 +14,17 @@ use windows::Win32::UI::WindowsAndMessaging::ClipCursor;
 
 const CHECK_EVERY: Duration = Duration::from_millis(200);
 const DISARMED: u64 = 0;
+const NO_LIMIT: u64 = u64::MAX;
 
 pub struct Failsafe {
-    limit: Duration,
     started: Instant,
     /// When the cursor must be free again, in milliseconds since `started`.
     deadline: Arc<AtomicU64>,
 }
 
 impl Failsafe {
-    pub fn start(limit: Duration) -> Self {
+    pub fn start() -> Self {
         let failsafe = Self {
-            limit,
             started: Instant::now(),
             deadline: Arc::new(AtomicU64::new(DISARMED)),
         };
@@ -43,10 +43,13 @@ impl Failsafe {
         failsafe
     }
 
-    /// Joystick mode starts: the clock runs.
-    pub fn arm(&self) {
-        let deadline = (self.started.elapsed() + self.limit).as_millis() as u64;
-        self.deadline.store(deadline.max(1), Ordering::SeqCst);
+    /// Joystick mode starts, or the watchdog went away: the clock runs
+    /// from now. `None`: no time limit.
+    pub fn arm(&self, limit: Option<Duration>) {
+        let deadline = limit.map_or(NO_LIMIT, |limit| {
+            ((self.started.elapsed() + limit).as_millis() as u64).max(1)
+        });
+        self.deadline.store(deadline, Ordering::SeqCst);
     }
 
     /// Joystick mode ended normally.
@@ -79,5 +82,5 @@ pub fn release_cursor_on_panic() {
         release_cursor();
         previous(info);
     }));
-    info!(target: "overlay", "cursor is released on panic and after the joystick mode time limit");
+    info!(target: "overlay", "cursor is released on panic");
 }

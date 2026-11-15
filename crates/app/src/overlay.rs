@@ -7,6 +7,7 @@
 mod failsafe;
 mod surface;
 mod telemetry;
+mod watchdog;
 
 use std::cell::RefCell;
 use std::mem::size_of;
@@ -18,6 +19,7 @@ use padpilot_core::overlay::layout::{DEFAULT_JOYSTICK_SIDE, Layout};
 use padpilot_core::overlay::model::{Command, HitKind, Mode, Overlay};
 use padpilot_core::overlay::paint::Painter;
 use padpilot_core::stick::{Contact, StickSettings};
+use padpilot_core::watchdog::{HEARTBEAT_EVERY, Message};
 use tracing::{debug, error, info, trace, warn};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -44,14 +46,30 @@ use crate::touchpad;
 use failsafe::Failsafe;
 use surface::Surface;
 use telemetry::{Telemetry, Timing};
+use watchdog::Watchdog;
 
-/// How long joystick mode may last before it switches itself off. A stopgap
-/// until the watchdog process exists.
-pub const DEFAULT_JOYSTICK_LIMIT: Duration = Duration::from_secs(60);
+/// How long joystick mode may last while the watchdog is not running.
+const UNWATCHED_JOYSTICK_LIMIT: Duration = Duration::from_secs(60);
+/// A watchdog that keeps dying is not started again forever.
+const MAX_WATCHDOG_RESTARTS: u32 = 3;
+
+/// How the overlay runs. The default is normal use.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Options {
+    /// Joystick mode switches itself off after this long. `None`: only
+    /// without the watchdog, after [`UNWATCHED_JOYSTICK_LIMIT`].
+    pub joystick_limit: Option<Duration>,
+    /// Record per-event timing to a CSV file.
+    pub telemetry: bool,
+    /// For testing the watchdog: the window freezes after joystick mode has
+    /// been on this long.
+    pub freeze_after: Option<Duration>,
+}
 
 /// Windows drops the cursor lock on its own now and then (for example when
 /// another window comes to the front), so it is applied again this often.
 const CAGE_TIMER: usize = 1;
+const HEARTBEAT_TIMER: usize = 2;
 const CAGE_EVERY_MS: u32 = 100;
 
 /// Distance from the screen corner where the window first appears.
@@ -69,16 +87,13 @@ thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
 }
 
-pub fn run(
-    joystick_limit: Duration,
-    settings: StickSettings,
-    record_telemetry: bool,
-) -> Result<(), Error> {
+pub fn run(options: Options, settings: StickSettings) -> Result<(), Error> {
     // SAFETY: a process-wide setting, made before any window exists. It
     // fails harmlessly when the setting was already made.
     let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     failsafe::release_cursor_on_panic();
 
+    let watchdog = start_watchdog();
     let pad = controller::connect()?;
     let window = create_window()?;
     // SAFETY: `window` was just created by this thread.
@@ -92,11 +107,15 @@ pub fn run(
         painter: Painter::new(layout),
         pad: Box::new(pad),
         reader: touchpad::Reader::attach(window)?,
-        failsafe: Failsafe::start(joystick_limit),
+        failsafe: Failsafe::start(),
         telemetry: None,
         stale_since: None,
+        watchdog,
+        watchdog_restarts: 0,
+        options,
+        joystick_since: None,
     };
-    if record_telemetry {
+    if options.telemetry {
         let telemetry = Telemetry::start(window)?;
         info!(target: "telemetry", path = %telemetry.path().display(), "recording");
         println!("Recording telemetry to {}", telemetry.path().display());
@@ -107,11 +126,21 @@ pub fn run(
         scale,
         width = layout.width(),
         height = layout.height(),
-        joystick_limit_s = joystick_limit.as_secs(),
+        ?options,
         "window created"
     );
     state.repaint();
+    state.heartbeat();
     STATE.set(Some(state));
+    // SAFETY: a plain call on a window this thread owns.
+    unsafe {
+        SetTimer(
+            Some(window),
+            HEARTBEAT_TIMER,
+            HEARTBEAT_EVERY.as_millis() as u32,
+            None,
+        )
+    };
     place_in_screen_corner(window, layout);
     // SAFETY: plain calls on a window this thread owns.
     unsafe {
@@ -123,8 +152,15 @@ pub fn run(
     }
 
     failsafe::release_cursor();
+    let Some(mut state) = STATE.take() else {
+        return Ok(());
+    };
+    if let Some(watchdog) = &mut state.watchdog {
+        // The watchdog now expects the pipe to close.
+        let _ = watchdog.tell(Message::Goodbye);
+    }
     // Dropping the state unplugs the virtual controller and saves telemetry.
-    if let Some(telemetry) = STATE.take().and_then(|state| state.telemetry) {
+    if let Some(telemetry) = state.telemetry.take() {
         info!(target: "telemetry", rows = telemetry.rows(), path = %telemetry.path().display(), "saved");
         println!(
             "Telemetry saved: {} events in {}",
@@ -146,6 +182,11 @@ struct State {
     reader: touchpad::Reader,
     failsafe: Failsafe,
     telemetry: Option<Telemetry>,
+    /// `None` when it could not be started or went away.
+    watchdog: Option<Watchdog>,
+    watchdog_restarts: u32,
+    options: Options,
+    joystick_since: Option<Instant>,
     /// When the knob on screen stopped matching the stick; `None`: it matches.
     stale_since: Option<Instant>,
 }
@@ -179,13 +220,15 @@ impl State {
     fn mode_changed(&mut self, mode: Mode) {
         match mode {
             Mode::Joystick => {
-                info!(target: "overlay", "entered joystick mode");
-                self.failsafe.arm();
+                info!(target: "overlay", limit = ?self.joystick_limit(), "entered joystick mode");
+                self.joystick_since = Some(Instant::now());
+                self.failsafe.arm(self.joystick_limit());
                 self.cage_cursor();
                 // SAFETY: a plain call on a window this thread owns.
                 unsafe { SetTimer(Some(self.window), CAGE_TIMER, CAGE_EVERY_MS, None) };
             }
             Mode::Normal => {
+                self.joystick_since = None;
                 self.failsafe.disarm();
                 // SAFETY: as above. The timer may already be gone.
                 let _ = unsafe { KillTimer(Some(self.window), CAGE_TIMER) };
@@ -197,7 +240,39 @@ impl State {
         if let Err(err) = self.pad.send(GamepadState::default()) {
             error!(target: "controller", "{err}");
         }
+        self.heartbeat();
         self.repaint();
+    }
+
+    fn joystick_limit(&self) -> Option<Duration> {
+        let unwatched = self.watchdog.is_none().then_some(UNWATCHED_JOYSTICK_LIMIT);
+        self.options.joystick_limit.or(unwatched)
+    }
+
+    /// Tells the watchdog this thread is alive. If the watchdog is gone,
+    /// starts a new one, and failing that, joystick mode gets a time limit.
+    fn heartbeat(&mut self) {
+        let message = Message::Beat(self.model.mode());
+        let Some(watchdog) = &mut self.watchdog else {
+            return;
+        };
+        if let Err(err) = watchdog.tell(message) {
+            error!(target: "watchdog", pid = watchdog.pid(), "{err}");
+            self.watchdog = None;
+            if self.watchdog_restarts < MAX_WATCHDOG_RESTARTS {
+                self.watchdog_restarts += 1;
+                self.watchdog = start_watchdog();
+            }
+            match &mut self.watchdog {
+                Some(watchdog) => {
+                    let _ = watchdog.tell(message);
+                }
+                None if self.model.mode() == Mode::Joystick => {
+                    self.failsafe.arm(self.joystick_limit());
+                }
+                None => {}
+            }
+        }
     }
 
     /// Keeps the cursor on the joystick, so every click lands on it.
@@ -218,6 +293,11 @@ impl State {
     }
 
     fn cage_tick(&mut self) {
+        if let (Some(after), Some(since)) = (self.options.freeze_after, self.joystick_since)
+            && since.elapsed() >= after
+        {
+            freeze();
+        }
         if self.failsafe.allows_lock() {
             self.cage_cursor();
         } else {
@@ -366,6 +446,7 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<
             None
         }
         WM_TIMER if wparam.0 == CAGE_TIMER => with_state(State::cage_tick).map(|()| 0),
+        WM_TIMER if wparam.0 == HEARTBEAT_TIMER => with_state(State::heartbeat).map(|()| 0),
         WM_MOVING => {
             // A window that is never activated does not follow the cursor
             // while dragged unless it is moved by hand.
@@ -393,6 +474,24 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<
             Some(0)
         }
         _ => None,
+    }
+}
+
+fn start_watchdog() -> Option<Watchdog> {
+    Watchdog::start()
+        .inspect_err(|err| {
+            warn!(target: "watchdog", "{err}; joystick mode will switch itself off after {} s", UNWATCHED_JOYSTICK_LIMIT.as_secs());
+            println!("Watchdog not running: joystick mode will switch itself off after {} s.", UNWATCHED_JOYSTICK_LIMIT.as_secs());
+        })
+        .ok()
+}
+
+/// Stops this thread for good, holding the controller where it is, to
+/// check that the watchdog steps in.
+fn freeze() -> ! {
+    error!(target: "overlay", "freezing on purpose to test the watchdog");
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
     }
 }
 

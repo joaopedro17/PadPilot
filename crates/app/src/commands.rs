@@ -18,8 +18,12 @@ use crate::{config, overlay, touchpad};
 const USAGE: &str = "\
 Usage:
   padpilot [overlay [seconds]]  show the on-screen joystick; joystick mode
-                                switches itself off after the seconds (default 60)
+                                switches itself off after the seconds (default:
+                                never, or 60 when the watchdog is not running)
   padpilot telemetry [seconds]  the same, recording input timing to a CSV file
+  padpilot freeze [seconds]     the same, but the window freezes after joystick
+                                mode has been on for the seconds (default 10),
+                                to check that the watchdog steps in
   padpilot throttle [seconds]   plug in the virtual controller and hold 50% throttle
   padpilot touchpad [seconds]   log finger touch-down, movement and lift
   padpilot drive [seconds]      drive the virtual controller from the touchpad
@@ -27,16 +31,14 @@ Usage:
 Seconds default to 30 for the test commands.";
 
 const DEFAULT_SECONDS: u64 = 30;
+const FREEZE_AFTER_SECONDS: u64 = 10;
 
 #[derive(Debug, Clone, Copy)]
 enum Command {
     Throttle(Duration),
     Touchpad(Duration),
     Drive(Duration),
-    Overlay {
-        joystick_limit: Duration,
-        telemetry: bool,
-    },
+    Overlay(overlay::Options),
 }
 
 impl Command {
@@ -48,11 +50,15 @@ impl Command {
         };
         let duration = Duration::from_secs(seconds.unwrap_or(DEFAULT_SECONDS));
         match name.as_str() {
-            "overlay" | "telemetry" => Some(Self::Overlay {
-                joystick_limit: seconds
-                    .map_or(overlay::DEFAULT_JOYSTICK_LIMIT, Duration::from_secs),
+            "overlay" | "telemetry" => Some(Self::Overlay(overlay::Options {
+                joystick_limit: seconds.map(Duration::from_secs),
                 telemetry: name == "telemetry",
-            }),
+                freeze_after: None,
+            })),
+            "freeze" => Some(Self::Overlay(overlay::Options {
+                freeze_after: Some(Duration::from_secs(seconds.unwrap_or(FREEZE_AFTER_SECONDS))),
+                ..overlay::Options::default()
+            })),
             "throttle" => Some(Self::Throttle(duration)),
             "touchpad" => Some(Self::Touchpad(duration)),
             "drive" => Some(Self::Drive(duration)),
@@ -63,7 +69,7 @@ impl Command {
     /// Per-event touchpad data is only logged at trace.
     fn log_level(self) -> Level {
         match self {
-            Self::Throttle(_) | Self::Drive(_) | Self::Overlay { .. } => Level::INFO,
+            Self::Throttle(_) | Self::Drive(_) | Self::Overlay(_) => Level::INFO,
             Self::Touchpad(_) => Level::TRACE,
         }
     }
@@ -73,10 +79,7 @@ impl Command {
             Self::Throttle(hold) => hold_half_throttle(hold),
             Self::Touchpad(duration) => log_touches(duration),
             Self::Drive(duration) => drive(duration, settings),
-            Self::Overlay {
-                joystick_limit,
-                telemetry,
-            } => overlay::run(joystick_limit, settings, telemetry),
+            Self::Overlay(options) => overlay::run(options, settings),
         }
     }
 }
