@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::mem::size_of;
+use std::ops::ControlFlow;
 use std::time::Duration;
 
 use padpilot_core::stick::Contact;
@@ -25,10 +26,10 @@ use crate::error::Error;
 const STOP_TIMER: usize = 1;
 
 /// Calls `on_contact` for the first finger on the touchpad, from this thread,
-/// until `duration` has passed (forever when `None`).
+/// until it asks to stop or `duration` has passed (forever when `None`).
 pub fn listen(
     duration: Option<Duration>,
-    mut on_contact: impl FnMut(Contact),
+    mut on_contact: impl FnMut(Contact) -> ControlFlow<()>,
 ) -> Result<(), Error> {
     if log_touchpads() == 0 {
         warn!(target: "reader", "no Precision Touchpad found");
@@ -62,7 +63,12 @@ pub fn listen(
     // SAFETY: a standard message loop; `message` is valid for every call.
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
         match message.message {
-            WM_INPUT => reader.input(HRAWINPUT(message.lParam.0 as _), &mut on_contact),
+            WM_INPUT => {
+                let input = HRAWINPUT(message.lParam.0 as _);
+                if reader.input(input, &mut on_contact).is_break() {
+                    break;
+                }
+            }
             WM_TIMER if message.wParam.0 == STOP_TIMER => break,
             _ => {}
         }
@@ -124,9 +130,13 @@ struct Reader {
 }
 
 impl Reader {
-    fn input(&mut self, input: HRAWINPUT, on_contact: &mut impl FnMut(Contact)) {
+    fn input(
+        &mut self,
+        input: HRAWINPUT,
+        on_contact: &mut impl FnMut(Contact) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
         let Some((device, reports, report_size)) = read_event(input, &mut self.event) else {
-            return;
+            return ControlFlow::Continue(());
         };
         let known = self.devices.entry(device.0 as usize).or_insert_with(|| {
             Layout::read(device)
@@ -138,7 +148,9 @@ impl Reader {
                     first: FirstContact::default(),
                 })
         });
-        let Some(known) = known else { return };
+        let Some(known) = known else {
+            return ControlFlow::Continue(());
+        };
         for report in reports.chunks_exact_mut(report_size) {
             let Some(contact_count) = known.layout.parse(report, &mut self.slots) else {
                 continue;
@@ -147,9 +159,10 @@ impl Reader {
                 continue;
             };
             if let Some(contact) = known.first.frame(frame) {
-                on_contact(contact);
+                on_contact(contact)?;
             }
         }
+        ControlFlow::Continue(())
     }
 }
 
@@ -161,7 +174,8 @@ fn read_event(input: HRAWINPUT, buffer: &mut Vec<u64>) -> Option<(HANDLE, &mut [
     // SAFETY: with no buffer the call only writes the needed size.
     unsafe { GetRawInputData(input, RID_INPUT, None, &mut bytes, header_size) };
     let total = bytes as usize;
-    if total < size_of::<RAWINPUT>() {
+    // A HID event is a header, two sizes, then the reports.
+    if total < size_of::<RAWINPUTHEADER>() + 2 * size_of::<u32>() {
         return None;
     }
     buffer.resize(total.div_ceil(8), 0);

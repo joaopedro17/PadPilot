@@ -169,3 +169,9 @@ fn settings_reject_values_that_cannot_work() {
     assert!(new(20.0, 0.0).is_ok());
     assert!(new(0.001, 0.99).is_ok());
 }
+
+#[test]
+fn default_settings_spring_back_with_a_small_dead_zone() {
+    let expected = StickSettings::new(LiftBehavior::ReturnToCenter, 20.0, 0.05).unwrap();
+    assert_eq!(StickSettings::default(), expected);
+}

@@ -101,6 +101,17 @@ impl StickSettings {
     }
 }
 
+impl Default for StickSettings {
+    /// Springs back to center; 20 mm of finger travel for full deflection.
+    fn default() -> Self {
+        Self {
+            lift_behavior: LiftBehavior::ReturnToCenter,
+            full_travel: 20.0,
+            dead_zone: 0.05,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Stick {
     settings: StickSettings,

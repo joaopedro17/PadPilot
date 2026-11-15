@@ -3,11 +3,12 @@
 //! Until the overlay exists, PadPilot runs as small diagnostic commands, one
 //! per build step. They stay useful afterwards for checking a new machine.
 
+use std::ops::ControlFlow;
 use std::process::ExitCode;
 use std::time::Duration;
 
 use padpilot_core::gamepad::{GamepadState, racing_state};
-use padpilot_core::stick::{Contact, Deflection};
+use padpilot_core::stick::{Contact, Deflection, Stick, StickSettings};
 use tracing::{Level, debug, error, info, trace};
 
 use crate::controller::{self, VirtualController};
@@ -18,6 +19,7 @@ const USAGE: &str = "\
 Usage:
   padpilot throttle [seconds]   plug in the virtual controller and hold 50% throttle
   padpilot touchpad [seconds]   log finger touch-down, movement and lift
+  padpilot drive [seconds]      drive the virtual controller from the touchpad
 
 Seconds default to 30.";
 
@@ -27,6 +29,7 @@ const DEFAULT_SECONDS: u64 = 30;
 enum Command {
     Throttle(Duration),
     Touchpad(Duration),
+    Drive(Duration),
 }
 
 impl Command {
@@ -40,6 +43,7 @@ impl Command {
         match name.as_str() {
             "throttle" => Some(Self::Throttle(duration)),
             "touchpad" => Some(Self::Touchpad(duration)),
+            "drive" => Some(Self::Drive(duration)),
             _ => None,
         }
     }
@@ -47,7 +51,7 @@ impl Command {
     /// Per-event touchpad data is only logged at trace.
     fn log_level(self) -> Level {
         match self {
-            Self::Throttle(_) => Level::INFO,
+            Self::Throttle(_) | Self::Drive(_) => Level::INFO,
             Self::Touchpad(_) => Level::TRACE,
         }
     }
@@ -56,6 +60,7 @@ impl Command {
         match self {
             Self::Throttle(hold) => hold_half_throttle(hold),
             Self::Touchpad(duration) => log_touches(duration),
+            Self::Drive(duration) => drive(duration),
         }
     }
 }
@@ -109,21 +114,54 @@ fn log_touches(duration: Duration) -> Result<(), Error> {
     );
     let mut touching = false;
     let mut moves = 0u32;
-    touchpad::listen(Some(duration), |contact| match contact {
-        Contact::Touching(at) if !touching => {
-            touching = true;
-            moves = 0;
-            debug!(target: "reader", x_mm = at.x, y_mm = at.y, "touch down");
-            println!("touch down at {:6.1} mm, {:6.1} mm", at.x, at.y);
+    touchpad::listen(Some(duration), |contact| {
+        match contact {
+            Contact::Touching(at) if !touching => {
+                touching = true;
+                moves = 0;
+                debug!(target: "reader", x_mm = at.x, y_mm = at.y, "touch down");
+                println!("touch down at {:6.1} mm, {:6.1} mm", at.x, at.y);
+            }
+            Contact::Touching(at) => {
+                moves += 1;
+                trace!(target: "reader", x_mm = at.x, y_mm = at.y, "move");
+            }
+            Contact::Lifted => {
+                touching = false;
+                debug!(target: "reader", moves, "lift");
+                println!("lift after {moves} moves");
+            }
         }
-        Contact::Touching(at) => {
-            moves += 1;
-            trace!(target: "reader", x_mm = at.x, y_mm = at.y, "move");
-        }
-        Contact::Lifted => {
-            touching = false;
-            debug!(target: "reader", moves, "lift");
-            println!("lift after {moves} moves");
-        }
+        ControlFlow::Continue(())
     })
+}
+
+/// Finger movement deflects the stick; the stick drives the controller.
+fn drive(duration: Duration) -> Result<(), Error> {
+    let mut pad = controller::connect()?;
+    let settings = StickSettings::default();
+    let mut stick = Stick::new(settings);
+    info!(target: "stick", ?settings, seconds = duration.as_secs(), "driving from the touchpad");
+    println!("Driving for {} s.", duration.as_secs());
+    println!("Slide up for throttle, down for brake, sideways to steer. Lift to release.");
+
+    let mut failure = None;
+    touchpad::listen(Some(duration), |contact| {
+        stick.apply(contact);
+        let state = racing_state(stick.output());
+        trace!(target: "stick", ?contact, ?state, "update");
+        match pad.send(state) {
+            Ok(()) => ControlFlow::Continue(()),
+            Err(err) => {
+                failure = Some(err);
+                ControlFlow::Break(())
+            }
+        }
+    })?;
+    if let Some(err) = failure {
+        return Err(err);
+    }
+    pad.send(GamepadState::default())?;
+    info!(target: "controller", "released to neutral");
+    Ok(())
 }
