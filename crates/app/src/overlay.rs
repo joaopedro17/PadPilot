@@ -5,6 +5,7 @@
 //! and the touchpad drives the virtual controller. Right-click again to leave.
 
 mod failsafe;
+mod focus;
 mod surface;
 mod telemetry;
 mod watchdog;
@@ -23,6 +24,7 @@ use padpilot_core::watchdog::{HEARTBEAT_EVERY, Message};
 use tracing::{debug, error, info, trace, warn};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
@@ -44,6 +46,7 @@ use crate::controller::{self, VirtualController};
 use crate::error::Error;
 use crate::touchpad;
 use failsafe::Failsafe;
+use focus::FocusHook;
 use surface::Surface;
 use telemetry::{Telemetry, Timing};
 use watchdog::Watchdog;
@@ -114,6 +117,7 @@ pub fn run(options: Options, settings: StickSettings) -> Result<(), Error> {
         watchdog_restarts: 0,
         options,
         joystick_since: None,
+        game: None,
     };
     if options.telemetry {
         let telemetry = Telemetry::start(window)?;
@@ -132,6 +136,7 @@ pub fn run(options: Options, settings: StickSettings) -> Result<(), Error> {
     state.repaint();
     state.heartbeat();
     STATE.set(Some(state));
+    let _focus_hook = FocusHook::install(Some(focus_changed));
     // SAFETY: a plain call on a window this thread owns.
     unsafe {
         SetTimer(
@@ -187,6 +192,8 @@ struct State {
     watchdog_restarts: u32,
     options: Options,
     joystick_since: Option<Instant>,
+    /// The window in front when joystick mode started: the game.
+    game: Option<HWND>,
     /// When the knob on screen stopped matching the stick; `None`: it matches.
     stale_since: Option<Instant>,
 }
@@ -220,7 +227,9 @@ impl State {
     fn mode_changed(&mut self, mode: Mode) {
         match mode {
             Mode::Joystick => {
-                info!(target: "overlay", limit = ?self.joystick_limit(), "entered joystick mode");
+                self.game = focus::foreground();
+                let game = self.game.map(focus::describe);
+                info!(target: "overlay", limit = ?self.joystick_limit(), game, "entered joystick mode");
                 self.joystick_since = Some(Instant::now());
                 self.failsafe.arm(self.joystick_limit());
                 self.cage_cursor();
@@ -229,6 +238,7 @@ impl State {
             }
             Mode::Normal => {
                 self.joystick_since = None;
+                self.game = None;
                 self.failsafe.disarm();
                 // SAFETY: as above. The timer may already be gone.
                 let _ = unsafe { KillTimer(Some(self.window), CAGE_TIMER) };
@@ -242,6 +252,13 @@ impl State {
         }
         self.heartbeat();
         self.repaint();
+    }
+
+    /// Joystick mode drives the game only while it is in front.
+    fn focus_moved(&mut self, front: HWND) {
+        if self.game.is_some_and(|game| game != front) {
+            self.leave_joystick_mode("another window came to the front");
+        }
     }
 
     fn joystick_limit(&self) -> Option<Duration> {
@@ -297,6 +314,18 @@ impl State {
             && since.elapsed() >= after
         {
             freeze();
+        }
+        if let Some(game) = self.game {
+            if !focus::exists(game) {
+                self.leave_joystick_mode("the game window closed");
+                return;
+            }
+            if let Some(front) = focus::foreground() {
+                self.focus_moved(front);
+                if self.game.is_none() {
+                    return;
+                }
+            }
         }
         if self.failsafe.allows_lock() {
             self.cage_cursor();
@@ -475,6 +504,19 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<
         }
         _ => None,
     }
+}
+
+extern "system" fn focus_changed(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    window: HWND,
+    _object: i32,
+    _child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    info!(target: "focus", window = focus::describe(window), "window in front changed");
+    with_state(|state| state.focus_moved(window));
 }
 
 fn start_watchdog() -> Option<Watchdog> {
