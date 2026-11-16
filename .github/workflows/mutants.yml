@@ -7,18 +7,21 @@ on:
     - cron: '0 6 * * 1'
   workflow_dispatch:
 
-permissions:
-  contents: read
+# Nothing by default; each job asks for what it needs. Actions are pinned
+# to commits, not tags: a tag can be moved to other code.
+permissions: {}
 
 jobs:
   mutants:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       # rustup installs the version in rust-toolchain.toml.
       - run: rustup show active-toolchain || rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: cargo-mutants
       # The drawing code is left out: its shading arithmetic changes how
@@ -34,7 +37,7 @@ jobs:
           cargo mutants -p padpilot-core -p padpilot-icon -p padpilot-logging \
             --exclude 'crates/core/src/overlay/paint.rs' --exclude 'crates/core/examples/*' || code=$?
           [ "$code" -eq 0 ] || [ "$code" -eq 3 ]
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: mutants.out
