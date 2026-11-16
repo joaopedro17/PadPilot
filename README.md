@@ -171,3 +171,6 @@ and you feel like saying thanks, you can [buy me a coffee](https://buymeacoffee.
 
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT),
 at your option.
+
+PadPilot is built with many open-source crates; their licenses are in
+`THIRD-PARTY-LICENSES.md` in each release zip.

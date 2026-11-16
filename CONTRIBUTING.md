@@ -165,12 +165,17 @@ run `Test freeze.cmd` and confirm the car stops and the cursor is free.
 ## Continuous integration
 
 Every push to `main` or `develop`, and every pull request into them, runs
-[CI](.github/workflows/ci.yml): on
-Linux, formatting, clippy and the logic tests; on Windows, clippy, every test and a
-release build in three parallel jobs, the build's executables attached to the run as an
-artifact. A pull request needs the `Linux` and `Windows` checks to pass; `Windows`
-passes only when all three Windows jobs did. [Mutation testing](.github/workflows/mutants.yml) runs weekly and can
-be started by hand from the Actions tab.
+[CI](.github/workflows/ci.yml): on Linux, formatting, clippy and the logic tests; on
+Windows, clippy, every test and a release build in three parallel jobs, the build's
+executables attached to the run as an artifact. A pull request needs the `Linux` and
+`Windows` checks to pass; `Windows` passes only when all three Windows jobs did.
+[Mutation testing](.github/workflows/mutants.yml) runs weekly and can be started by hand
+from the Actions tab.
+
+CI builds with the Rust version in `rust-toolchain.toml` and the dependency versions in
+`Cargo.lock` (`--locked`). Moving to a newer Rust is a change like any other: edit
+`rust-toolchain.toml` and fix what clippy finds. Actions are pinned to commits, with the
+version in a comment.
 
 ## Releasing
 
@@ -185,10 +190,22 @@ be started by hand from the Actions tab.
    ```
 3. On GitHub, **Releases → Draft a new release**: create the tag `vX.Y.Z` on `main`,
    write the notes, and publish.
-4. The [release workflow](.github/workflows/release.yml) checks that the tag is on
-   `main` and matches the version, runs the tests, builds on Windows, and attaches
-   `PadPilot-X.Y.Z-windows-x64.zip` and its SHA-256 checksum to the release (a few
-   minutes after publishing).
+4. Publishing runs CI on the tag, then one job per step: **Check version** (the tag is on
+   `main` and matches `Cargo.toml`), **Third-party licenses**, **Package** (the zip, from
+   the executables of **Windows build**) and **Attach to the release**. A few minutes
+   later the release has `PadPilot-X.Y.Z-windows-x64.zip` and its SHA-256 checksum. The
+   zip holds the three executables, the README, the licenses and
+   `THIRD-PARTY-LICENSES.md`.
+
+If a job fails, the release turns back into a draft, so nobody finds it without its zip.
+For a temporary problem (a network error), open the run and choose **Re-run failed jobs**:
+only that job runs again, and **Attach to the release** publishes the release once the
+files are on it. If the cause is in the code or the version, fix it, delete the draft and
+its tag, and release again from step 1.
+
+A new crate with a license not yet in `about.toml`'s `accepted` list fails **Third-party
+licenses**. Check that the license allows shipping in PadPilot, add it, and check locally
+with `cargo about generate --fail about.hbs` (`cargo install cargo-about --features cli`).
 
 ## The icon
 
