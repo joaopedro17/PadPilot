@@ -6,6 +6,10 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  # Publishing a release on GitHub (tag vX.Y.Z on main) also builds the zip
+  # and attaches it, after the same checks as every push.
+  release:
+    types: [published]
 
 # Nothing by default; each job asks for what it needs. Actions are pinned
 # to commits, not tags: a tag can be moved to other code.
@@ -78,6 +82,7 @@ jobs:
             target/release/padpilot.exe
             target/release/padpilot-watchdog.exe
             target/release/padpilot-settings.exe
+          if-no-files-found: error
 
   windows:
     # Required status check "Windows": passes only when all three Windows jobs
@@ -87,9 +92,127 @@ jobs:
     needs: [windows-clippy, windows-test, windows-build]
     if: always()
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    permissions: {}
     steps:
       - name: All Windows jobs passed
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
         run: exit 1
+
+  # Release jobs: only when a release is published. Each does one thing, so
+  # a failure is fixed by re-running that job alone ("Re-run failed jobs").
+  version:
+    name: Check version
+    if: github.event_name == 'release'
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+      - id: check
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          if [[ "$TAG" != "v$version" ]]; then
+            echo "::error::Tag $TAG doesn't match the version in Cargo.toml ($version)."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $TAG points to a commit that isn't on main."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  licenses:
+    name: Third-party licenses
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with:
+          tool: cargo-about@0.9.3
+      - run: cargo about generate --fail about.hbs -o THIRD-PARTY-LICENSES.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: third-party-licenses
+          path: THIRD-PARTY-LICENSES.md
+          if-no-files-found: error
+
+  # Uses the executables "Windows build" made above, so nothing is compiled twice.
+  package:
+    name: Package
+    needs: [version, licenses, windows-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      NAME: PadPilot-${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: PadPilot-windows-x64
+          path: ${{ env.NAME }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: third-party-licenses
+          path: ${{ env.NAME }}
+      - name: Zip and checksum
+        run: |
+          cp README.md LICENSE-MIT LICENSE-APACHE "$NAME"/
+          mkdir dist
+          zip -r "dist/$NAME-windows-x64.zip" "$NAME"
+          cd dist
+          sha256sum "$NAME-windows-x64.zip" > "$NAME-windows-x64.zip.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release
+          path: dist
+          if-no-files-found: error
+
+  attach:
+    name: Attach to the release
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release
+          path: dist
+      # On a re-run after a failure, the release is a draft again (see below):
+      # publish it once its files are there. Publishing with this token starts
+      # no new run.
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          if [[ $(gh release view "$TAG" --json isDraft --jq .isDraft --repo "$GITHUB_REPOSITORY") == true ]]; then
+            gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+          fi
+
+  # A release without its zip shouldn't stay public. Re-run the failed job,
+  # or fix the cause and publish the draft again.
+  unpublish:
+    name: Turn the release back into a draft
+    needs: [linux, windows, version, licenses, package, attach]
+    if: failure() && github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release edit "$TAG" --draft=true --repo "$GITHUB_REPOSITORY"
