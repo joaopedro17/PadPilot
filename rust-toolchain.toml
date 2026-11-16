@@ -1,0 +1,5 @@
+# The Rust version CI and every build use. A new Rust release can bring new
+# clippy warnings, so it is moved here on purpose, not picked up by surprise.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
